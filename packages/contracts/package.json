@@ -22,7 +22,7 @@
   "scripts": {
     "build": "node ../../scripts/clean-package.mjs && ttsc --project tsconfig.json",
     "clean": "node ../../scripts/clean-package.mjs",
-    "prepack": "pnpm build",
+    "prepack": "pnpm --filter @bmkl/contracts... build",
     "typecheck": "ttsc --noEmit"
   },
   "dependencies": {

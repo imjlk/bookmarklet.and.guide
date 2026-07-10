@@ -22,7 +22,7 @@
   "scripts": {
     "build": "node ../../scripts/build-package.mjs browser && ttsc --project tsconfig.build.json --emitDeclarationOnly",
     "clean": "node ../../scripts/clean-package.mjs",
-    "prepack": "pnpm build",
+    "prepack": "pnpm --filter @bmkl/runtime... build",
     "typecheck": "ttsc --noEmit"
   },
   "dependencies": {

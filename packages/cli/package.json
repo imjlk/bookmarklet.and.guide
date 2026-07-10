@@ -1,7 +1,15 @@
 {
   "name": "@bmkl/cli",
   "version": "0.1.0",
+  "description": "Command-line tools for creating, developing, building, and debugging BMKL bookmarklets.",
+  "keywords": ["bookmarklet", "cli", "vite"],
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "bmkl": "./dist/index.js",
     "bmk": "./dist/index.js"
@@ -16,9 +24,10 @@
     "dist"
   ],
   "scripts": {
-    "build": "node ../../scripts/build-package.mjs node --shebang && chmod +x dist/index.js && ttsc --project tsconfig.build.json --emitDeclarationOnly",
-    "clean": "rm -rf dist",
+    "build": "node ../../scripts/build-package.mjs node --shebang && ttsc --project tsconfig.build.json --emitDeclarationOnly",
+    "clean": "node ../../scripts/clean-package.mjs",
     "dev": "tsx src/index.ts",
+    "prepack": "pnpm --filter @bmkl/cli... build",
     "typecheck": "ttsc --noEmit"
   },
   "dependencies": {

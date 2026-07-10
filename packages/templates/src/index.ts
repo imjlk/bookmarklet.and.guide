@@ -1,9 +1,9 @@
 import {
   copyFile,
+  lstat,
   mkdir,
   readdir,
   readFile,
-  stat,
   writeFile,
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -44,6 +44,13 @@ export interface CreateProjectResult {
   projectName: string;
   globalName: string;
   projectId: string;
+}
+
+interface TemplateReplacements {
+  bmklVersion: string;
+  globalName: string;
+  projectId: string;
+  projectName: string;
 }
 
 const TEMPLATE_INFOS: TemplateInfo[] = [
@@ -97,6 +104,30 @@ const TEMPLATE_INFOS: TemplateInfo[] = [
   },
 ];
 
+const EXCLUDED_TEMPLATE_ENTRIES = new Set([
+  ".DS_Store",
+  ".git",
+  "dist",
+  "node_modules",
+]);
+
+const TEXT_TEMPLATE_EXTENSIONS = new Set([
+  ".css",
+  ".cjs",
+  ".html",
+  ".js",
+  ".json",
+  ".jsx",
+  ".md",
+  ".mjs",
+  ".mts",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".yaml",
+  ".yml",
+]);
+
 export async function listTemplates(): Promise<string[]> {
   return (await readdir(getTemplatesRoot(), { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
@@ -114,6 +145,11 @@ export function getTemplateInfo(template: string): TemplateInfo | undefined {
 }
 
 export function getTemplateDir(template: string): string {
+  if (!getTemplateInfo(template)) {
+    throw new Error(
+      `Unknown template: ${template}. Choose ${TEMPLATE_NAMES.join(" | ")}.`,
+    );
+  }
   return join(getTemplatesRoot(), template);
 }
 
@@ -141,10 +177,12 @@ export async function createProject(
   const projectName = toPackageName(basename(destination));
   const globalName = toGlobalName(basename(destination));
   const projectId = `__bmkl_${projectName.replace(/[^a-z0-9]+/g, "_")}__`;
+  const bmklVersion = await getBmklVersion();
 
   await assertWritableDirectory(destination, Boolean(options.force));
   await mkdir(destination, { recursive: true });
   await copyTemplateDirectory(templateDir, destination, {
+    bmklVersion,
     globalName,
     projectId,
     projectName,
@@ -154,7 +192,24 @@ export async function createProject(
   if (!existsSync(gitignorePath)) {
     await writeFile(
       gitignorePath,
-      "node_modules/\ndist/\n.env\n.DS_Store\n*.tsbuildinfo\n",
+      [
+        "node_modules/",
+        "dist/",
+        ".bmkl-dev-cert/",
+        ".env*",
+        "!.env.example",
+        ".DS_Store",
+        "*.tsbuildinfo",
+        "",
+      ].join("\n"),
+    );
+  }
+
+  const pnpmWorkspacePath = join(destination, "pnpm-workspace.yaml");
+  if (!existsSync(pnpmWorkspacePath)) {
+    await writeFile(
+      pnpmWorkspacePath,
+      ['packages:', '  - "."', 'allowBuilds:', '  esbuild: true', ''].join("\n"),
     );
   }
 
@@ -172,7 +227,10 @@ async function assertWritableDirectory(
   force: boolean,
 ): Promise<void> {
   try {
-    const info = await stat(destination);
+    const info = await lstat(destination);
+    if (info.isSymbolicLink()) {
+      throw new Error(`Target directory must not be a symbolic link: ${destination}`);
+    }
     if (!info.isDirectory()) {
       throw new Error(`Target exists and is not a directory: ${destination}`);
     }
@@ -192,22 +250,31 @@ async function assertWritableDirectory(
 async function copyTemplateDirectory(
   source: string,
   destination: string,
-  replacements: {
-    projectName: string;
-    globalName: string;
-    projectId: string;
-  },
+  replacements: TemplateReplacements,
 ): Promise<void> {
   const entries = await readdir(source, { withFileTypes: true });
   await mkdir(destination, { recursive: true });
 
   for (const entry of entries) {
+    if (EXCLUDED_TEMPLATE_ENTRIES.has(entry.name)) {
+      continue;
+    }
+
     const sourcePath = join(source, entry.name);
     const destinationPath = join(destination, entry.name);
+
+    if (entry.isSymbolicLink()) {
+      throw new Error(`Template symbolic links are not allowed: ${sourcePath}`);
+    }
+    await assertNotSymbolicLink(destinationPath);
 
     if (entry.isDirectory()) {
       await copyTemplateDirectory(sourcePath, destinationPath, replacements);
       continue;
+    }
+
+    if (!entry.isFile()) {
+      throw new Error(`Unsupported template entry: ${sourcePath}`);
     }
 
     await mkdir(dirname(destinationPath), { recursive: true });
@@ -220,42 +287,54 @@ async function copyTemplateDirectory(
   }
 }
 
+async function assertNotSymbolicLink(path: string): Promise<void> {
+  try {
+    if ((await lstat(path)).isSymbolicLink()) {
+      throw new Error(`Refusing to overwrite a symbolic link: ${path}`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+}
+
 function isTextTemplateFile(path: string): boolean {
   const extension = extname(path);
   if (!extension) {
     return true;
   }
 
-  return new Set([
-    ".css",
-    ".cjs",
-    ".html",
-    ".js",
-    ".json",
-    ".jsx",
-    ".md",
-    ".mjs",
-    ".mts",
-    ".ts",
-    ".tsx",
-    ".txt",
-    ".yaml",
-    ".yml",
-  ]).has(extension);
+  return TEXT_TEMPLATE_EXTENSIONS.has(extension);
 }
 
 function applyReplacements(
   text: string,
-  replacements: {
-    projectName: string;
-    globalName: string;
-    projectId: string;
-  },
+  replacements: TemplateReplacements,
 ): string {
   return text
+    .replaceAll("__BMKL_VERSION__", replacements.bmklVersion)
     .replaceAll("__BMKL_PROJECT_NAME__", replacements.projectName)
     .replaceAll("__BMKL_GLOBAL_NAME__", replacements.globalName)
     .replaceAll("__BMKL_PROJECT_ID__", replacements.projectId);
+}
+
+async function getBmklVersion(): Promise<string> {
+  const packageJsonPath = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "package.json",
+  );
+  const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8")) as {
+    version?: unknown;
+  };
+
+  if (typeof packageJson.version !== "string" || packageJson.version.length === 0) {
+    throw new Error(`Invalid @bmkl/templates version in ${packageJsonPath}`);
+  }
+
+  return packageJson.version;
 }
 
 function toPackageName(input: string): string {

@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises";
+import { chmod, rm } from "node:fs/promises";
 import { build } from "esbuild";
 
 const platform = process.argv[2] ?? "node";
@@ -21,3 +21,7 @@ await build({
     },
   },
 });
+
+if (shebang) {
+  await chmod("dist/index.js", 0o755);
+}

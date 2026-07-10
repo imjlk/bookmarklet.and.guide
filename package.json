@@ -1,17 +1,27 @@
 {
   "name": "bookmarklet-and-guide",
   "version": "0.1.0",
+  "description": "A Vite-first toolkit and guide for building bookmarklets as in-page applications.",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": ">=11.7.0"
+  },
   "packageManager": "pnpm@11.7.0",
   "scripts": {
-    "build": "pnpm --filter @bmkl/contracts build && pnpm --filter @bmkl/core build && pnpm --filter @bmkl/runtime build && pnpm --filter @bmkl/templates build && pnpm --filter @bmkl/vite build && pnpm --filter create-bmkl build && pnpm --filter @bmkl/cli build && pnpm --filter @bmkl/web build",
-    "clean": "pnpm -r clean",
-    "cli": "BMKL_CWD=$PWD pnpm --filter @bmkl/cli dev",
+    "build": "pnpm build:packages && pnpm --filter @bmkl/web build",
+    "build:packages": "pnpm --recursive --filter './packages/*' build",
+    "clean": "pnpm --recursive run clean",
+    "cli": "node scripts/run-cli.mjs",
     "e2e:debug": "pnpm build && node scripts/e2e-debug.mjs",
     "format": "ttsc format",
     "graph": "ttsc-graph",
+    "test": "pnpm --filter @bmkl/core test && pnpm --filter @bmkl/templates test && pnpm test:runtime",
+    "test:runtime": "pnpm --filter @bmkl/contracts build && pnpm --filter @bmkl/runtime build && node scripts/runtime-smoke.mjs",
+    "test:templates": "pnpm build:packages && node scripts/template-smoke.mjs",
     "typecheck": "pnpm -r typecheck",
+    "web:deploy": "pnpm --filter @bmkl/web deploy",
     "web:dev": "pnpm --filter @bmkl/web dev",
     "web:preview": "pnpm --filter @bmkl/web preview"
   },

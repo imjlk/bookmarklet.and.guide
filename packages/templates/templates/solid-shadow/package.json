@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "bmkl build",
@@ -13,17 +17,18 @@
     "typecheck": "ttsc --noEmit"
   },
   "dependencies": {
-    "@bmkl/runtime": "workspace:*",
+    "@bmkl/runtime": "__BMKL_VERSION__",
     "solid-js": "^1.9.14"
   },
   "devDependencies": {
-    "@bmkl/cli": "workspace:*",
-    "@bmkl/core": "workspace:*",
-    "@bmkl/vite": "workspace:*",
+    "@bmkl/cli": "__BMKL_VERSION__",
+    "@bmkl/core": "__BMKL_VERSION__",
+    "@bmkl/vite": "__BMKL_VERSION__",
     "@ttsc/graph": "^0.18.0",
     "@ttsc/lint": "^0.18.0",
     "@ttsc/paths": "^0.18.0",
     "@ttsc/strip": "^0.18.0",
+    "esbuild": "^0.28.1",
     "ttsc": "^0.18.0",
     "typescript": "^7.0.2",
     "vite": "^8.1.4",

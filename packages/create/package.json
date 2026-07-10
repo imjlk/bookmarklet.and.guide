@@ -1,7 +1,15 @@
 {
   "name": "create-bmkl",
   "version": "0.1.0",
+  "description": "Create Vite-powered BMKL bookmarklet projects from maintained templates.",
+  "keywords": ["bookmarklet", "create", "scaffold", "vite"],
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "create-bmkl": "./dist/index.js"
   },
@@ -15,9 +23,10 @@
     "dist"
   ],
   "scripts": {
-    "build": "node ../../scripts/build-package.mjs node --shebang && chmod +x dist/index.js && ttsc --project tsconfig.build.json --emitDeclarationOnly",
-    "clean": "rm -rf dist",
+    "build": "node ../../scripts/build-package.mjs node --shebang && ttsc --project tsconfig.build.json --emitDeclarationOnly",
+    "clean": "node ../../scripts/clean-package.mjs",
     "dev": "tsx src/index.ts",
+    "prepack": "pnpm --filter create-bmkl... build",
     "typecheck": "ttsc --noEmit"
   },
   "dependencies": {

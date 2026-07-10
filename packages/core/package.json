@@ -22,7 +22,7 @@
   "scripts": {
     "build": "node ../../scripts/build-package.mjs node && ttsc --project tsconfig.build.json --emitDeclarationOnly",
     "clean": "node ../../scripts/clean-package.mjs",
-    "prepack": "pnpm build",
+    "prepack": "pnpm --filter @bmkl/core... build",
     "pretest": "pnpm --filter @bmkl/contracts build && pnpm build",
     "test": "node --test test/*.test.mjs",
     "typecheck": "ttsc --noEmit"
