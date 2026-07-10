@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   access,
+  copyFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -12,7 +13,8 @@ import {
 } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { join, parse } from "node:path";
+import { dirname, join, parse } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import vm from "node:vm";
 import {
@@ -37,6 +39,26 @@ test("loadConfig reports the failing config path and preserves the cause", async
       },
     );
   });
+});
+
+test("resolveConfig rejects unsupported runtime contract values", () => {
+  for (const [name, value, choices] of [
+    ["runtime", "hybrid", "inline | remote"],
+    ["ui", "popup", "shadow | iframe | none"],
+    ["channel", "stable", "dev | canary | latest | pinned"],
+  ]) {
+    assert.throws(
+      () =>
+        resolveConfig({
+          name: "invalid-config",
+          entry: "src/inject.ts",
+          [name]: value,
+        }),
+      new RegExp(
+        `Invalid bookmarklet config ${name}: ${value}\\. Choose ${choices.replaceAll(" | ", " \\| ")}\\.`,
+      ),
+    );
+  }
 });
 
 test("debug loader awaits async runs and replaces global listeners on reinjection", async () => {
@@ -314,6 +336,203 @@ test("BookmarkBuilder emits nested remote.appPath at the configured location", a
   });
 });
 
+test("inspect ignores disabled optional artifacts even when stale files exist", async () => {
+  await withProject(async ({ root, config }) => {
+    const builder = new BookmarkBuilder(config);
+    await builder.build();
+
+    await Promise.all([
+      writeFile(join(root, "dist", "remote", "install.html"), "stale"),
+      writeFile(join(root, "dist", "remote", "manifest.json"), "{}"),
+      writeFile(join(root, "dist", "meta", "build-report.json"), "{}"),
+    ]);
+
+    const result = await builder.inspect();
+    assert.deepEqual(
+      result.artifacts.map((artifact) => artifact.kind),
+      ["app", "loader", "bookmarklet", "bookmarklet"],
+    );
+    assert.equal(result.manifest, undefined);
+    assert.equal(result.report, undefined);
+    assert.deepEqual(result.warnings, []);
+  });
+});
+
+test("inspect measures the configured runtime bookmarklet", async () => {
+  await withProject(async ({ root, config }) => {
+    const bookmarklets = {
+      inline: "javascript:inline-primary-bookmarklet",
+      remote: "javascript:remote-primary",
+    };
+
+    for (const runtime of ["remote", "inline"]) {
+      const builder = new BookmarkBuilder({ ...config, runtime });
+      await builder.build();
+      await Promise.all([
+        writeFile(
+          join(root, "dist", "remote", "bookmarklet.txt"),
+          `${bookmarklets.remote}\n`,
+        ),
+        writeFile(
+          join(root, "dist", "inline", "bookmarklet.txt"),
+          `${bookmarklets.inline}\n`,
+        ),
+      ]);
+
+      const result = await builder.inspect();
+      assert.equal(result.bookmarkletLength, bookmarklets[runtime].length);
+    }
+  });
+});
+
+test("inspect warns when enabled metadata violates its contract", async () => {
+  await withProject(async ({ root, config }) => {
+    const builder = new BookmarkBuilder({
+      ...config,
+      output: {
+        ...config.output,
+        installHtml: true,
+        manifest: true,
+        report: true,
+      },
+    });
+    await builder.build();
+    const validResult = await builder.inspect();
+    assert.ok(validResult.manifest);
+    assert.ok(validResult.report);
+    assert.deepEqual(validResult.warnings, []);
+
+    await Promise.all([
+      writeFile(join(root, "dist", "remote", "manifest.json"), "{}\n"),
+      writeFile(
+        join(root, "dist", "meta", "build-report.json"),
+        '{"name":"incomplete"}\n',
+      ),
+    ]);
+
+    const result = await builder.inspect();
+    assert.equal(result.manifest, undefined);
+    assert.equal(result.report, undefined);
+    assert.ok(
+      result.warnings.some((warning) =>
+        warning.startsWith("Invalid manifest artifact:"),
+      ),
+    );
+    assert.ok(
+      result.warnings.some((warning) =>
+        warning.startsWith("Invalid build report artifact:"),
+      ),
+    );
+  });
+});
+
+test("inspect does not report directories as generated artifacts", async () => {
+  await withProject(async ({ root, config }) => {
+    const builder = new BookmarkBuilder(config);
+    await builder.build();
+    const appPath = join(root, "dist", "remote", "app.iife.js");
+    await rm(appPath);
+    await mkdir(appPath);
+
+    const result = await builder.inspect();
+    assert.equal(
+      result.artifacts.some((artifact) => artifact.path === appPath),
+      false,
+    );
+    assert.ok(
+      result.warnings.some((warning) => warning.endsWith("remote/app.iife.js")),
+    );
+  });
+});
+
+test("packaged core derives bookmarklet and Chrome versions from package.json", async () => {
+  await withProject(async ({ config }) => {
+    await withPackagedCoreVersion(
+      "12.34.56-beta.7+build.9",
+      async (packagedCore) => {
+        const builder = new packagedCore.BookmarkBuilder({
+          ...config,
+          output: {
+            ...config.output,
+            manifest: true,
+          },
+        });
+        await builder.build();
+        const bookmarkletManifest = JSON.parse(
+          await readFile(
+            join(config.root, "dist", "remote", "manifest.json"),
+            "utf8",
+          ),
+        );
+        assert.equal(bookmarkletManifest.version, "12.34.56-beta.7");
+        assert.equal(bookmarkletManifest.compat.runtime, "bmkl@12.34");
+        const inspected = await builder.inspect();
+        assert.equal(inspected.manifest?.version, "12.34.56-beta.7");
+        assert.equal(
+          inspected.warnings.some((warning) =>
+            warning.startsWith("Invalid manifest artifact:"),
+          ),
+          false,
+        );
+
+        const companion = await packagedCore.buildCompanionExtension(config, {
+          outDir: "versioned-companion",
+          quiet: true,
+          target: "https://example.com/",
+        });
+        const companionManifest = JSON.parse(
+          await readFile(companion.manifestPath, "utf8"),
+        );
+        assert.equal(companionManifest.version, "12.34.56");
+        assert.equal(
+          companionManifest.version_name,
+          "12.34.56-beta.7+build.9",
+        );
+      },
+    );
+  });
+});
+
+test("packaged core always emits Chrome-compatible numeric versions", async () => {
+  await withProject(async ({ config }) => {
+    const cases = [
+      {
+        packageVersion: "12.34.56",
+        version: "12.34.56",
+        versionName: undefined,
+      },
+      {
+        packageVersion: "0.0.0",
+        version: "0.0.0.1",
+        versionName: "0.0.0",
+      },
+      {
+        packageVersion: "70000.80000.90000",
+        version: "65535.65535.65535",
+        versionName: "70000.80000.90000",
+      },
+    ];
+
+    for (const [index, testCase] of cases.entries()) {
+      await withPackagedCoreVersion(
+        testCase.packageVersion,
+        async (packagedCore) => {
+          const companion = await packagedCore.buildCompanionExtension(config, {
+            outDir: `chrome-version-${index}`,
+            quiet: true,
+            target: "https://example.com/",
+          });
+          const manifest = JSON.parse(
+            await readFile(companion.manifestPath, "utf8"),
+          );
+          assert.equal(manifest.version, testCase.version);
+          assert.equal(manifest.version_name, testCase.versionName);
+        },
+      );
+    }
+  });
+});
+
 test("companion requires a concrete HTTP(S) target without deleting output", async () => {
   await withProject(async ({ root, config }) => {
     const outDir = join(root, "companion");
@@ -489,6 +708,28 @@ async function withProject(callback) {
     await callback({ config, root });
   } finally {
     await rm(sandbox, { force: true, recursive: true });
+  }
+}
+
+async function withPackagedCoreVersion(version, callback) {
+  const testDirectory = dirname(fileURLToPath(import.meta.url));
+  const fixtureRoot = await mkdtemp(join(testDirectory, ".packaged-core-"));
+  const fixtureDist = join(fixtureRoot, "dist");
+  const fixtureBundle = join(fixtureDist, "index.js");
+
+  try {
+    await mkdir(fixtureDist);
+    await Promise.all([
+      copyFile(fileURLToPath(new URL("../dist/index.js", import.meta.url)), fixtureBundle),
+      writeFile(
+        join(fixtureRoot, "package.json"),
+        `${JSON.stringify({ type: "module", version }, null, 2)}\n`,
+      ),
+    ]);
+    const packagedCore = await import(pathToFileURL(fixtureBundle).href);
+    await callback(packagedCore);
+  } finally {
+    await rm(fixtureRoot, { force: true, recursive: true });
   }
 }
 

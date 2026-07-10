@@ -1,6 +1,6 @@
 import typia, { type IValidation, type tags } from "typia";
 
-export type BmklRuntime = "inline" | "remote" | "hybrid";
+export type BmklRuntime = "inline" | "remote";
 export type BmklUiMode = "shadow" | "iframe" | "none";
 export type BmklUpdateChannel = "dev" | "canary" | "latest" | "pinned";
 

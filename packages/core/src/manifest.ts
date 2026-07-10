@@ -3,14 +3,20 @@ import type {
   BookmarkletBuildConfig,
   BookmarkletManifest,
 } from "./types.js";
+import {
+  getCorePackageVersion,
+  toBmklManifestVersion,
+  toBmklRuntimeCompatibility,
+} from "./version.js";
 
 export function createManifest(
   config: BookmarkletBuildConfig,
   appCode: string,
 ): BookmarkletManifest {
+  const packageVersion = getCorePackageVersion();
   return {
     name: config.name,
-    version: "0.1.0",
+    version: toBmklManifestVersion(packageVersion),
     channel: config.channel,
     runtime: config.runtime,
     ui: config.ui,
@@ -19,7 +25,7 @@ export function createManifest(
     sha256: createHash("sha256").update(appCode).digest("hex"),
     releaseDate: new Date().toISOString(),
     compat: {
-      runtime: "bmkl@0.1",
+      runtime: toBmklRuntimeCompatibility(packageVersion),
       minBrowser: "chrome>=120, firefox>=120, safari>=17",
     },
   };

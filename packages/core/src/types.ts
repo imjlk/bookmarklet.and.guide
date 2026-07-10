@@ -1,6 +1,19 @@
-export type BookmarkletRuntime = "inline" | "remote" | "hybrid";
-export type BookmarkletUiMode = "shadow" | "iframe" | "none";
-export type UpdateChannel = "dev" | "canary" | "latest" | "pinned";
+export const BOOKMARKLET_RUNTIME_CHOICES = ["inline", "remote"] as const;
+export const BOOKMARKLET_UI_MODE_CHOICES = [
+  "shadow",
+  "iframe",
+  "none",
+] as const;
+export const BOOKMARKLET_UPDATE_CHANNEL_CHOICES = [
+  "dev",
+  "canary",
+  "latest",
+  "pinned",
+] as const;
+
+export type BookmarkletRuntime = (typeof BOOKMARKLET_RUNTIME_CHOICES)[number];
+export type BookmarkletUiMode = (typeof BOOKMARKLET_UI_MODE_CHOICES)[number];
+export type UpdateChannel = (typeof BOOKMARKLET_UPDATE_CHANNEL_CHOICES)[number];
 
 export interface BookmarkletRemoteConfig {
   baseUrl: string;

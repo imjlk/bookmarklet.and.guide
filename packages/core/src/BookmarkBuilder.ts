@@ -45,8 +45,10 @@ import type {
   BookmarkletArtifact,
   BookmarkletBuildConfig,
   BookmarkletBuildOptions,
+  BookmarkletBuildReport,
   BookmarkletBuildResult,
   BookmarkletInspectResult,
+  BookmarkletManifest,
   CompanionBuildOptions,
   CompanionBuildResult,
   DevServerResult,
@@ -342,16 +344,31 @@ export class BookmarkBuilder {
     const artifacts: BookmarkletArtifact[] = [];
     const warnings: string[] = [];
     let bookmarkletLength = 0;
-
-    for (const [kind, path] of [
+    const manifestEnabled = this.config.output?.manifest !== false;
+    const installHtmlEnabled = this.config.output?.installHtml !== false;
+    const reportEnabled = this.config.output?.report !== false;
+    const expectedArtifacts: Array<
+      readonly [BookmarkletArtifact["kind"], string]
+    > = [
       ["app", paths.remoteApp],
       ["loader", paths.remoteLoader],
+    ];
+
+    if (manifestEnabled) {
+      expectedArtifacts.push(["manifest", paths.remoteManifest]);
+    }
+    expectedArtifacts.push(
       ["bookmarklet", paths.remoteBookmarklet],
       ["bookmarklet", paths.inlineBookmarklet],
-      ["install-html", paths.installHtml],
-      ["manifest", paths.remoteManifest],
-      ["report", paths.report],
-    ] as const) {
+    );
+    if (installHtmlEnabled) {
+      expectedArtifacts.push(["install-html", paths.installHtml]);
+    }
+    if (reportEnabled) {
+      expectedArtifacts.push(["report", paths.report]);
+    }
+
+    for (const [kind, path] of expectedArtifacts) {
       try {
         artifacts.push(await this.artifact(kind, path));
       } catch {
@@ -359,15 +376,37 @@ export class BookmarkBuilder {
       }
     }
 
+    const primaryBookmarklet =
+      this.config.runtime === "inline"
+        ? paths.inlineBookmarklet
+        : paths.remoteBookmarklet;
     try {
-      bookmarkletLength = (await readFile(paths.remoteBookmarklet, "utf8")).trim()
+      bookmarkletLength = (await readFile(primaryBookmarklet, "utf8")).trim()
         .length;
     } catch {
       warnings.push("Run bmkl build before inspecting bookmarklet length.");
     }
 
-    const manifest = await readManifest(paths.remoteManifest);
-    const report = await readJson(paths.report);
+    const inspectedPaths = new Set(artifacts.map((artifact) => artifact.path));
+    const manifest = manifestEnabled
+      ? await readManifest(paths.remoteManifest)
+      : undefined;
+    if (
+      manifestEnabled &&
+      inspectedPaths.has(paths.remoteManifest) &&
+      !manifest
+    ) {
+      warnings.push(
+        `Invalid manifest artifact: ${relative(this.config.root, paths.remoteManifest)}`,
+      );
+    }
+
+    const report = reportEnabled ? await readBuildReport(paths.report) : undefined;
+    if (reportEnabled && inspectedPaths.has(paths.report) && !report) {
+      warnings.push(
+        `Invalid build report artifact: ${relative(this.config.root, paths.report)}`,
+      );
+    }
 
     return {
       bookmarkletLength,
@@ -573,6 +612,9 @@ export class BookmarkBuilder {
     includeText = false,
   ): Promise<BookmarkletArtifact> {
     const info = await stat(path);
+    if (!info.isFile()) {
+      throw new Error(`Artifact is not a file: ${path}`);
+    }
     return {
       kind,
       fileName: basename(path),
@@ -738,20 +780,70 @@ function installDevCorsMiddleware(
   });
 }
 
-async function readJson(path: string): Promise<any | undefined> {
+async function readBuildReport(
+  path: string,
+): Promise<BookmarkletBuildReport | undefined> {
   try {
-    return JSON.parse(await readFile(path, "utf8"));
+    const input: unknown = JSON.parse(await readFile(path, "utf8"));
+    return isBookmarkletBuildReport(input) ? input : undefined;
   } catch {
     return undefined;
   }
 }
 
-async function readManifest(path: string): Promise<any | undefined> {
+async function readManifest(
+  path: string,
+): Promise<BookmarkletManifest | undefined> {
   try {
     return parseBmklRemoteManifestJson(await readFile(path, "utf8"));
   } catch {
     return undefined;
   }
+}
+
+function isBookmarkletBuildReport(
+  input: unknown,
+): input is BookmarkletBuildReport {
+  if (!isRecord(input)) {
+    return false;
+  }
+
+  return (
+    typeof input.name === "string" &&
+    (input.runtime === "inline" || input.runtime === "remote") &&
+    ["dev", "canary", "latest", "pinned"].includes(String(input.channel)) &&
+    typeof input.buildTime === "string" &&
+    !Number.isNaN(Date.parse(input.buildTime)) &&
+    Number.isSafeInteger(input.bookmarkletLength) &&
+    Number(input.bookmarkletLength) >= 0 &&
+    ["low", "medium", "high"].includes(String(input.cspRisk)) &&
+    Array.isArray(input.artifacts) &&
+    input.artifacts.every(isBuildReportArtifact) &&
+    Array.isArray(input.warnings) &&
+    input.warnings.every((warning) => typeof warning === "string")
+  );
+}
+
+function isBuildReportArtifact(input: unknown): boolean {
+  return (
+    isRecord(input) &&
+    [
+      "app",
+      "loader",
+      "bookmarklet",
+      "install-html",
+      "manifest",
+      "report",
+    ].includes(String(input.kind)) &&
+    typeof input.fileName === "string" &&
+    input.fileName.length > 0 &&
+    Number.isSafeInteger(input.size) &&
+    Number(input.size) >= 0
+  );
+}
+
+function isRecord(input: unknown): input is Record<string, unknown> {
+  return typeof input === "object" && input !== null && !Array.isArray(input);
 }
 
 function toMessage(error: unknown): string {

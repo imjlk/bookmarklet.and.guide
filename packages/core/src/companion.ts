@@ -15,6 +15,7 @@ import {
   resolveSafeOutputDir,
   writeTextFile,
 } from "./path.js";
+import { getCorePackageVersion, toChromeManifestVersion } from "./version.js";
 
 const COMPANION_CONTENT_FILE = "companion-content.js";
 const COMPANION_SERVICE_WORKER_FILE = "service-worker.js";
@@ -152,10 +153,11 @@ function createManifest(
   targetMatch: string,
   debugConsoleMatch: string,
 ): Record<string, unknown> {
+  const version = getCorePackageVersion();
   return {
     manifest_version: 3,
     name: `BMKL Companion: ${config.name}`,
-    version: "0.1.0",
+    ...toChromeManifestVersion(version),
     description:
       "Development companion for testing BMKL apps on strict CSP target pages.",
     action: {

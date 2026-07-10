@@ -3,6 +3,11 @@ import { cwd as processCwd } from "node:process";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createJiti } from "jiti";
+import {
+  BOOKMARKLET_RUNTIME_CHOICES,
+  BOOKMARKLET_UI_MODE_CHOICES,
+  BOOKMARKLET_UPDATE_CHANNEL_CHOICES,
+} from "./types.js";
 import type {
   BookmarkletBuildConfig,
   BookmarkletConfigOverrides,
@@ -52,6 +57,24 @@ export function resolveConfig(
 ): BookmarkletBuildConfig {
   const root = resolve(configRoot, userConfig.root ?? ".");
   const name = userConfig.name;
+  const runtime = resolveConfigChoice(
+    "runtime",
+    userConfig.runtime,
+    BOOKMARKLET_RUNTIME_CHOICES,
+    "remote",
+  );
+  const ui = resolveConfigChoice(
+    "ui",
+    userConfig.ui,
+    BOOKMARKLET_UI_MODE_CHOICES,
+    "shadow",
+  );
+  const channel = resolveConfigChoice(
+    "channel",
+    userConfig.channel,
+    BOOKMARKLET_UPDATE_CHANNEL_CHOICES,
+    "latest",
+  );
 
   return {
     root,
@@ -59,9 +82,9 @@ export function resolveConfig(
     outDir: userConfig.outDir ?? "dist/bookmarklet",
     name,
     globalName: userConfig.globalName ?? toGlobalName(name),
-    runtime: userConfig.runtime ?? "remote",
-    ui: userConfig.ui ?? "shadow",
-    channel: userConfig.channel ?? "latest",
+    runtime,
+    ui,
+    channel,
     remote: {
       baseUrl: userConfig.remote?.baseUrl ?? "https://example.com/bookmarklet/",
       loaderPath: userConfig.remote?.loaderPath ?? "loader.js",
@@ -169,6 +192,21 @@ function definedProperties<T extends object>(value: T | undefined): Partial<T> {
   return Object.fromEntries(
     Object.entries(value).filter(([, property]) => property !== undefined),
   ) as Partial<T>;
+}
+
+function resolveConfigChoice<const T extends readonly string[]>(
+  name: string,
+  value: string | undefined,
+  choices: T,
+  fallback: T[number],
+): T[number] {
+  const resolved = value ?? fallback;
+  if ((choices as readonly string[]).includes(resolved)) {
+    return resolved as T[number];
+  }
+  throw new Error(
+    `Invalid bookmarklet config ${name}: ${resolved}. Choose ${choices.join(" | ")}.`,
+  );
 }
 
 function toGlobalName(name: string): string {
