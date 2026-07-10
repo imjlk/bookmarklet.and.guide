@@ -6,6 +6,7 @@ export {
   resolveConfig,
 } from "./config.js";
 export { compactJavaScript, toBookmarklet } from "./encoder.js";
+export { joinUrl, normalizeBaseUrl } from "./path.js";
 export {
   BOOKMARKLET_RUNTIME_CHOICES,
   BOOKMARKLET_UI_MODE_CHOICES,

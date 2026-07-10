@@ -123,11 +123,53 @@ export async function writeTextFile(path: string, text: string): Promise<number>
 }
 
 export function normalizeBaseUrl(baseUrl: string): string {
-  return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch (error) {
+    throw new Error(`Invalid remote base URL: ${baseUrl}`, { cause: error });
+  }
+
+  if (
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(
+      `Remote base URL must use HTTP(S) without credentials, a query, or a fragment: ${baseUrl}`,
+    );
+  }
+
+  if (!url.pathname.endsWith("/")) {
+    url.pathname += "/";
+  }
+  return url.toString();
 }
 
 export function joinUrl(baseUrl: string, path: string): string {
-  return new URL(path.replace(/^\/+/, ""), normalizeBaseUrl(baseUrl)).toString();
+  const base = new URL(normalizeBaseUrl(baseUrl));
+  const relativePath = path.replace(/^\//, "");
+  if (
+    !relativePath ||
+    path !== path.trim() ||
+    path.startsWith("//") ||
+    path.includes("\\") ||
+    /[?#]/.test(path) ||
+    /^[a-z][a-z\d+.-]*:/i.test(relativePath)
+  ) {
+    throw new Error(`Remote asset path must be a relative URL path: ${path}`);
+  }
+
+  const joined = new URL(relativePath, base);
+  if (
+    joined.origin !== base.origin ||
+    !joined.pathname.startsWith(base.pathname)
+  ) {
+    throw new Error(`Remote asset path must stay inside the base URL: ${path}`);
+  }
+  return joined.toString();
 }
 
 function assertPathInside(root: string, path: string, label: string): void {

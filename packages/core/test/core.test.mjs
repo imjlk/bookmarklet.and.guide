@@ -21,7 +21,9 @@ import {
   BookmarkBuilder,
   buildCompanionExtension,
   createDebugDevBookmarkletSource,
+  joinUrl,
   loadConfig,
+  normalizeBaseUrl,
   resolveConfig,
 } from "../dist/index.js";
 
@@ -57,6 +59,48 @@ test("resolveConfig rejects unsupported runtime contract values", () => {
       new RegExp(
         `Invalid bookmarklet config ${name}: ${value}\\. Choose ${choices.replaceAll(" | ", " \\| ")}\\.`,
       ),
+    );
+  }
+});
+
+test("remote URL helpers preserve base paths and reject ambiguous bases", () => {
+  assert.equal(
+    normalizeBaseUrl("https://cdn.example.com/bookmarklets"),
+    "https://cdn.example.com/bookmarklets/",
+  );
+  assert.equal(
+    joinUrl("https://cdn.example.com/bookmarklets", "loader.js"),
+    "https://cdn.example.com/bookmarklets/loader.js",
+  );
+  assert.equal(
+    joinUrl("https://cdn.example.com/bookmarklets", "/loader.js"),
+    "https://cdn.example.com/bookmarklets/loader.js",
+  );
+  assert.throws(
+    () => normalizeBaseUrl("not-a-url"),
+    /Invalid remote base URL/,
+  );
+
+  for (const baseUrl of [
+    "ftp://cdn.example.com/bookmarklets/",
+    "https://user:secret@cdn.example.com/bookmarklets/",
+    "https://cdn.example.com/bookmarklets/?token=secret",
+    "https://cdn.example.com/bookmarklets/#latest",
+  ]) {
+    assert.throws(() => normalizeBaseUrl(baseUrl), /Remote base URL must/);
+  }
+
+  for (const remotePath of [
+    "https://evil.example/payload.js",
+    "//evil.example/payload.js",
+    "../payload.js",
+    "%2e%2e/payload.js",
+    "payload.js?token=secret",
+    "nested\\payload.js",
+  ]) {
+    assert.throws(
+      () => joinUrl("https://cdn.example.com/bookmarklets/", remotePath),
+      /Remote asset path must/,
     );
   }
 });
@@ -310,6 +354,18 @@ test("BookmarkBuilder rejects artifact paths that escape their output directory"
         },
       }).build(),
       /must resolve to a file, not a directory/,
+    );
+    assert.equal(await readFile(outputMarker, "utf8"), "keep");
+
+    await assert.rejects(
+      new BookmarkBuilder({
+        ...config,
+        remote: {
+          ...config.remote,
+          appPath: "https://evil.example/payload.js",
+        },
+      }).build(),
+      /Remote asset path must be a relative URL path/,
     );
     assert.equal(await readFile(outputMarker, "utf8"), "keep");
   });

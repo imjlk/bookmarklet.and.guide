@@ -2,6 +2,7 @@
   "name": "create-bmkl",
   "version": "0.1.0",
   "description": "Create Vite-powered BMKL bookmarklet projects from maintained templates.",
+  "homepage": "https://bookmarklet.and.guide",
   "keywords": ["bookmarklet", "create", "scaffold", "vite"],
   "type": "module",
   "engines": {
@@ -27,6 +28,8 @@
     "clean": "node ../../scripts/clean-package.mjs",
     "dev": "tsx src/index.ts",
     "prepack": "pnpm --filter create-bmkl... build",
+    "pretest": "pnpm --dir ../.. build:packages",
+    "test": "node --test test/*.test.mjs",
     "typecheck": "ttsc --noEmit"
   },
   "dependencies": {

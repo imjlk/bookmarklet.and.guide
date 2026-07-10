@@ -2,6 +2,7 @@
   "name": "@bmkl/cli",
   "version": "0.1.0",
   "description": "Command-line tools for creating, developing, building, and debugging BMKL bookmarklets.",
+  "homepage": "https://bookmarklet.and.guide",
   "keywords": ["bookmarklet", "cli", "vite"],
   "type": "module",
   "engines": {
@@ -28,7 +29,7 @@
     "clean": "node ../../scripts/clean-package.mjs",
     "dev": "tsx src/index.ts",
     "prepack": "pnpm --filter @bmkl/cli... build",
-    "pretest": "pnpm --filter @bmkl/cli... build",
+    "pretest": "pnpm --dir ../.. build:packages",
     "test": "node --test test/*.test.mjs",
     "typecheck": "ttsc --noEmit"
   },

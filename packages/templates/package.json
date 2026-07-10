@@ -2,9 +2,13 @@
   "name": "@bmkl/templates",
   "version": "0.1.0",
   "description": "Official project templates and scaffold utilities for BMKL.",
+  "homepage": "https://bookmarklet.and.guide",
   "keywords": ["bookmarklet", "scaffold", "templates", "vite"],
   "type": "module",
   "packageManager": "pnpm@11.7.0",
+  "bmkl": {
+    "packageManager": "pnpm@11.7.0"
+  },
   "engines": {
     "node": ">=22.12.0"
   },
@@ -25,7 +29,7 @@
     "build": "node ../../scripts/build-package.mjs node && ttsc --emitDeclarationOnly --rootDir src --outDir dist",
     "clean": "node ../../scripts/clean-package.mjs",
     "prepack": "pnpm --filter @bmkl/templates... build",
-    "pretest": "pnpm build",
+    "pretest": "pnpm --dir ../.. build:packages",
     "test": "node --test test/*.test.mjs",
     "typecheck": "ttsc --noEmit"
   },

@@ -1,8 +1,10 @@
-import { existsSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 import {
+  BOOKMARKLET_RUNTIME_CHOICES,
+  BOOKMARKLET_UPDATE_CHANNEL_CHOICES,
   BookmarkBuilder,
   loadConfig,
   type BookmarkletConfigOverrides,
@@ -16,10 +18,7 @@ import {
   type TemplateInfo,
 } from "@bmkl/templates";
 
-const VERSION = "0.1.0";
-const RUNTIME_CHOICES = ["inline", "remote"] as const;
-const CHANNEL_CHOICES = ["dev", "canary", "latest", "pinned"] as const;
-
+const VERSION = readOwnPackageVersion();
 interface ParsedArgs {
   flags: Map<string, string | boolean>;
   positionals: string[];
@@ -119,7 +118,7 @@ async function runCreate(argv: string[]): Promise<void> {
       f: "force",
       t: "template",
     },
-    booleans: ["force", "help", "json"],
+    booleans: ["force", "help", "json", "local"],
     values: ["template"],
   });
 
@@ -138,6 +137,7 @@ async function runCreate(argv: string[]): Promise<void> {
   const result = await createProject({
     destination: resolve(getInvocationCwd(), target),
     force: flagBoolean(args, "force"),
+    local: flagBoolean(args, "local"),
     template: flagString(args, "template") ?? DEFAULT_TEMPLATE,
   });
 
@@ -146,7 +146,7 @@ async function runCreate(argv: string[]): Promise<void> {
     return;
   }
 
-  printCreateResult(result, detectPackageManager());
+  printCreateResult(result);
 }
 
 async function runTemplates(argv: string[]): Promise<void> {
@@ -191,12 +191,12 @@ async function runBuild(argv: string[]): Promise<void> {
   const runtime = validateChoice(
     "runtime",
     flagString(args, "runtime"),
-    RUNTIME_CHOICES,
+    BOOKMARKLET_RUNTIME_CHOICES,
   );
   const channel = validateChoice(
     "channel",
     flagString(args, "channel"),
-    CHANNEL_CHOICES,
+    BOOKMARKLET_UPDATE_CHANNEL_CHOICES,
   );
   const baseUrl = flagString(args, "base-url");
   if (runtime) {
@@ -282,21 +282,28 @@ async function runInstallPage(argv: string[]): Promise<void> {
     cwd: getInvocationCwd(),
     configFile: flagString(args, "config"),
   });
+  if (config.output?.installHtml === false) {
+    throw new Error(
+      "Install page output is disabled. Set output.installHtml to true in the bookmarklet config.",
+    );
+  }
+
   const result = await new BookmarkBuilder(config).build({
     quiet: flagBoolean(args, "json"),
   });
   const installPage = result.artifacts.find(
     (artifact) => artifact.kind === "install-html",
   );
+  if (!installPage) {
+    throw new Error("Build completed without an install page artifact.");
+  }
 
   if (flagBoolean(args, "json")) {
     console.log(
       JSON.stringify(
         {
-          path: installPage?.path,
-          relativePath: installPage
-            ? relative(config.root, installPage.path)
-            : undefined,
+          path: installPage.path,
+          relativePath: relative(config.root, installPage.path),
         },
         null,
         2,
@@ -305,9 +312,7 @@ async function runInstallPage(argv: string[]): Promise<void> {
     return;
   }
 
-  if (installPage) {
-    console.log(installPage.path);
-  }
+  console.log(installPage.path);
 }
 
 async function runDev(argv: string[]): Promise<void> {
@@ -448,7 +453,7 @@ async function runDoctor(argv: string[]): Promise<void> {
 
   const entryPath = resolve(config.root, config.entry);
   checks.push(
-    existsSync(entryPath)
+    isRegularFile(entryPath)
       ? {
           name: "entry",
           status: "pass",
@@ -463,7 +468,7 @@ async function runDoctor(argv: string[]): Promise<void> {
 
   const tsconfigPath = resolve(config.root, config.ttsc?.project ?? "tsconfig.json");
   checks.push(
-    !config.ttsc?.enabled || existsSync(tsconfigPath)
+    !config.ttsc?.enabled || isRegularFile(tsconfigPath)
       ? {
           name: "ttsc-project",
           status: "pass",
@@ -478,25 +483,31 @@ async function runDoctor(argv: string[]): Promise<void> {
         },
   );
 
-  const ttscVersion = spawnSync("ttsc", ["--version"], {
-    cwd: config.root,
-    encoding: "utf8",
-  });
-  checks.push(
-    !config.ttsc?.enabled || ttscVersion.status === 0
-      ? {
-          name: "ttsc-binary",
-          status: "pass",
-          message: config.ttsc?.enabled
-            ? ttscVersion.stdout.trim()
-            : "ttsc checks are disabled",
-        }
-      : {
-          name: "ttsc-binary",
-          status: "fail",
-          message: "Could not run ttsc --version",
-        },
-  );
+  if (config.ttsc?.enabled) {
+    const ttscVersion = spawnSync("ttsc", ["--version"], {
+      cwd: config.root,
+      encoding: "utf8",
+    });
+    checks.push(
+      ttscVersion.status === 0
+        ? {
+            name: "ttsc-binary",
+            status: "pass",
+            message: ttscVersion.stdout.trim(),
+          }
+        : {
+            name: "ttsc-binary",
+            status: "fail",
+            message: "Could not run ttsc --version",
+          },
+    );
+  } else {
+    checks.push({
+      name: "ttsc-binary",
+      status: "pass",
+      message: "ttsc checks are disabled",
+    });
+  }
 
   try {
     const smoke = await runContractSmoke();
@@ -516,36 +527,27 @@ async function runDoctor(argv: string[]): Promise<void> {
     });
   }
 
-  checks.push(
-    config.remote?.baseUrl &&
-      !config.remote.baseUrl.includes("example.com") &&
-      /^https?:\/\//.test(config.remote.baseUrl)
-      ? {
-          name: "remote-base-url",
-          status: "pass",
-          message: config.remote.baseUrl,
-        }
-      : {
-          name: "remote-base-url",
-          status: "warn",
-          message:
-            "remote.baseUrl is still the default or is not an absolute URL.",
-        },
-  );
+  checks.push(createRemoteBaseUrlCheck(config.runtime, config.remote?.baseUrl));
 
   const inspect = await new BookmarkBuilder(config).inspect();
   checks.push(
-    inspect.artifacts.length > 0
+    inspect.artifacts.length === 0
       ? {
-          name: "artifacts",
-          status: "pass",
-          message: `Found ${inspect.artifacts.length} generated artifact(s).`,
-        }
-      : {
           name: "artifacts",
           status: "warn",
           message: "Run bmkl build to generate bookmarklet artifacts.",
-        },
+        }
+      : inspect.warnings.length > 0
+        ? {
+            name: "artifacts",
+            status: "fail",
+            message: inspect.warnings.join(" "),
+          }
+        : {
+            name: "artifacts",
+            status: "pass",
+            message: `Found ${inspect.artifacts.length} generated artifact(s).`,
+          },
   );
 
   const report = {
@@ -759,7 +761,12 @@ async function printRootHelp(): Promise<void> {
   console.log("  bmkl contracts smoke");
   console.log("  bmkl install-page");
   console.log("");
-  console.log("Create-package entrypoints:");
+  console.log("Source checkout:");
+  console.log(
+    "  pnpm cli -- create my-bookmarklet --local --template lit-shadow",
+  );
+  console.log("");
+  console.log("After npm publication (not available yet):");
   console.log("  npm create bmkl@latest my-bookmarklet -- --template lit-shadow");
   console.log("  pnpm create bmkl my-bookmarklet --template ttsc-shadow");
   console.log("  pnpm create bmkl my-bookmarklet --template solid-query-shadow");
@@ -779,6 +786,7 @@ function printCreateHelp(): void {
   console.log("Options:");
   console.log(`  -t, --template <name>   Template (${TEMPLATE_NAMES.join(" | ")})`);
   console.log("  -f, --force             Write into a non-empty directory");
+  console.log("  --local                 Link prebuilt BMKL packages from this checkout");
   console.log("  --json                  Print created project metadata as JSON");
   console.log("  -h, --help              Show this help");
 }
@@ -894,22 +902,23 @@ function printContractsHelp(): void {
   console.log("  -h, --help  Show this help");
 }
 
-function printCreateResult(
-  result: CreateProjectResult,
-  packageManager: string,
-): void {
+function printCreateResult(result: CreateProjectResult): void {
   console.log(
     `Created ${result.template.name} (${result.template.title}) at ${result.destination}`,
+  );
+  console.log(`Package manager: ${result.packageManager} (generated project policy)`);
+  console.log(
+    `Dependencies: ${result.dependencyMode === "local" ? "local BMKL source packages" : "published BMKL package versions"}`,
   );
   console.log("");
   console.log("Next:");
   console.log(`  cd ${result.destination}`);
-  console.log(`  ${installCommand(packageManager)}`);
-  console.log(`  ${runCommand(packageManager, "dev")}`);
+  console.log("  pnpm install");
+  console.log("  pnpm dev");
   console.log("");
   console.log("Build artifacts:");
-  console.log(`  ${runCommand(packageManager, "build")}`);
-  console.log(`  ${runCommand(packageManager, "inspect")}`);
+  console.log("  pnpm build");
+  console.log("  pnpm inspect");
 }
 
 function printTemplateInfos(templates: TemplateInfo[]): void {
@@ -1132,32 +1141,72 @@ function validateChoice<const T extends readonly string[]>(
   throw new Error(`Invalid --${name}: ${value}. Choose ${choices.join(" | ")}.`);
 }
 
-function detectPackageManager(): string {
-  const userAgent = process.env.npm_config_user_agent ?? "";
-  if (userAgent.startsWith("bun")) {
-    return "bun";
+function createRemoteBaseUrlCheck(
+  runtime: string,
+  baseUrl: string | undefined,
+): DoctorCheck {
+  let url: URL;
+  try {
+    if (!baseUrl) {
+      throw new Error("missing URL");
+    }
+    url = new URL(baseUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error("unsupported protocol");
+    }
+    if (url.username || url.password) {
+      throw new Error("credentials are not allowed");
+    }
+    if (url.search || url.hash) {
+      throw new Error("query parameters and fragments are not allowed");
+    }
+  } catch {
+    return {
+      name: "remote-base-url",
+      status: "warn",
+      message:
+        "remote.baseUrl must be an absolute HTTP(S) URL without credentials, a query, or a fragment.",
+    };
   }
-  if (userAgent.startsWith("pnpm")) {
-    return "pnpm";
+
+  if (runtime === "inline") {
+    return {
+      name: "remote-base-url",
+      status: "pass",
+      message: "Not required for the inline runtime.",
+    };
   }
-  if (userAgent.startsWith("yarn")) {
-    return "yarn";
+  if (url.hostname === "example.com") {
+    return {
+      name: "remote-base-url",
+      status: "warn",
+      message: "remote.baseUrl still uses the example.com placeholder.",
+    };
   }
-  return "pnpm";
+  return {
+    name: "remote-base-url",
+    status: "pass",
+    message: url.toString(),
+  };
 }
 
-function installCommand(packageManager: string): string {
-  if (packageManager === "yarn") {
-    return "yarn";
+function isRegularFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
   }
-  return `${packageManager} install`;
 }
 
-function runCommand(packageManager: string, script: string): string {
-  if (packageManager === "npm") {
-    return `npm run ${script}`;
+function readOwnPackageVersion(): string {
+  const packageJsonUrl = new URL("../package.json", import.meta.url);
+  const metadata = JSON.parse(readFileSync(packageJsonUrl, "utf8")) as {
+    version?: unknown;
+  };
+  if (typeof metadata.version !== "string" || metadata.version.length === 0) {
+    throw new Error(`Invalid @bmkl/cli version in ${packageJsonUrl.pathname}`);
   }
-  return `${packageManager} ${script}`;
+  return metadata.version;
 }
 
 function formatBytes(size: number): string {
@@ -1225,7 +1274,7 @@ function isTypiaTransformMissing(error: unknown): boolean {
 
 const cliArgv = process.argv.slice(2);
 
-main(cliArgv).catch((error) => {
+main([...cliArgv]).catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   if (hasEnabledJsonFlag(cliArgv)) {
     console.log(JSON.stringify({ ok: false, error: { message } }, null, 2));
@@ -1239,10 +1288,15 @@ main(cliArgv).catch((error) => {
 });
 
 function hasEnabledJsonFlag(argv: string[]): boolean {
+  let sawArgument = false;
   for (const arg of argv) {
     if (arg === "--") {
+      if (!sawArgument) {
+        continue;
+      }
       return false;
     }
+    sawArgument = true;
     if (arg === "--json" || arg === "--json=true") {
       return true;
     }

@@ -118,6 +118,257 @@ test("JSON mode reports structured errors", () => {
   assert.equal(result.stderr, "");
 });
 
+test("transport separators preserve structured JSON errors", () => {
+  const result = runCli(["--", "build", "--json", "--runtime", "hybrid"]);
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr, "");
+  assert.equal(
+    JSON.parse(result.stdout).error.message,
+    "Invalid --runtime: hybrid. Choose inline | remote.",
+  );
+});
+
+test("reported CLI version comes from package metadata", async () => {
+  const manifest = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  );
+  const result = runCli(["--version"]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), manifest.version);
+});
+
+for (const bootstrapAgent of ["npm/11.0.0", "bun/1.2.0", "yarn/4.0.0"]) {
+  test(`bmkl create reports pinned pnpm commands under ${bootstrapAgent}`, async () => {
+    const root = await mkdtemp(join(tmpdir(), "bmkl-cli-create-test-"));
+    try {
+      const result = runCli(
+        ["create", "app", "--template", "vanilla-shadow"],
+        { cwd: root, env: { npm_config_user_agent: bootstrapAgent } },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      const manifest = JSON.parse(
+        await readFile(join(root, "app", "package.json"), "utf8"),
+      );
+      assert.match(manifest.packageManager, /^pnpm@\d+\.\d+\.\d+$/);
+      assert.match(result.stdout, /Package manager: pnpm@\d+\.\d+\.\d+/);
+      for (const command of [
+        "pnpm install",
+        "pnpm dev",
+        "pnpm build",
+        "pnpm inspect",
+      ]) {
+        assert.match(result.stdout, new RegExp(`  ${command}`));
+      }
+      assert.doesNotMatch(result.stdout, /  (?:bun|npm|yarn) /);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+}
+
+test("bmkl create local mode emits installable source-package overrides", async () => {
+  const root = await mkdtemp(join(tmpdir(), "bmkl-cli-local-create-test-"));
+  try {
+    const result = runCli(
+      ["create", "app", "--local", "--json", "--template", "vanilla-shadow"],
+      { cwd: root },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).dependencyMode, "local");
+    const manifest = JSON.parse(
+      await readFile(join(root, "app", "package.json"), "utf8"),
+    );
+    assert.match(manifest.dependencies["@bmkl/runtime"], /^file:/);
+    assert.match(manifest.devDependencies["@bmkl/cli"], /^file:/);
+    const workspace = await readFile(
+      join(root, "app", "pnpm-workspace.yaml"),
+      "utf8",
+    );
+    assert.match(workspace, /"@bmkl\/contracts": "file:/);
+    assert.match(workspace, /"@bmkl\/templates": "file:/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("install-page fails before building when output is disabled", async () => {
+  await withBuildProject(async ({ root }) => {
+    const marker = join(root, "dist", "custom", "keep.txt");
+    await mkdir(join(root, "dist", "custom"), { recursive: true });
+    await writeFile(marker, "keep\n");
+
+    const result = runCli(["install-page", "--json"], { cwd: root });
+
+    assert.equal(result.status, 1);
+    assert.equal(result.stderr, "");
+    assert.equal(
+      JSON.parse(result.stdout).error.message,
+      "Install page output is disabled. Set output.installHtml to true in the bookmarklet config.",
+    );
+    assert.equal(await readFile(marker, "utf8"), "keep\n");
+  });
+});
+
+test("doctor skips disabled ttsc checks and ignores remote config for inline runtime", async () => {
+  await withBuildProject(async ({ binDir, root }) => {
+    const configPath = join(root, "doctor-inline.config.mjs");
+    const marker = join(root, "ttsc-ran.txt");
+    await writeFile(
+      configPath,
+      `export default {
+  name: "doctor-inline",
+  entry: "src/inject.ts",
+  outDir: "dist/doctor-inline",
+  runtime: "inline",
+  ttsc: { enabled: false },
+  output: { installHtml: false, manifest: false, report: false },
+};
+`,
+    );
+
+    const result = runCli(
+      ["doctor", "--json", "--config", configPath],
+      {
+        cwd: root,
+        env: { ...withPath(binDir), BMKL_TTSC_MARKER: marker },
+      },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.ok, true);
+    assert.deepEqual(findCheck(report, "ttsc-project"), {
+      name: "ttsc-project",
+      status: "pass",
+      message: "ttsc checks are disabled",
+    });
+    assert.deepEqual(findCheck(report, "ttsc-binary"), {
+      name: "ttsc-binary",
+      status: "pass",
+      message: "ttsc checks are disabled",
+    });
+    assert.equal(findCheck(report, "remote-base-url").status, "pass");
+    await assert.rejects(readFile(marker, "utf8"), { code: "ENOENT" });
+  });
+});
+
+test("doctor validates URL hosts and requires regular config files", async () => {
+  await withBuildProject(async ({ binDir, root }) => {
+    const validConfig = join(root, "doctor-remote.config.mjs");
+    await writeFile(
+      validConfig,
+      `export default {
+  name: "doctor-remote",
+  entry: "src/inject.ts",
+  outDir: "dist/doctor-remote",
+  runtime: "remote",
+  remote: { baseUrl: "https://myexample.com/assets/" },
+  ttsc: { enabled: false },
+  output: { installHtml: false, manifest: false, report: false },
+};
+`,
+    );
+    const valid = runCli(["doctor", "--json", "--config", validConfig], {
+      cwd: root,
+    });
+    assert.equal(valid.status, 0, valid.stderr);
+    assert.equal(
+      findCheck(JSON.parse(valid.stdout), "remote-base-url").status,
+      "pass",
+    );
+
+    const invalidUrlConfig = join(root, "doctor-invalid-url.config.mjs");
+    await writeFile(
+      invalidUrlConfig,
+      `export default {
+  name: "doctor-invalid-url",
+  entry: "src/inject.ts",
+  outDir: "dist/doctor-invalid-url",
+  runtime: "remote",
+  remote: { baseUrl: "http://" },
+  ttsc: { enabled: false },
+  output: { installHtml: false, manifest: false, report: false },
+};
+`,
+    );
+    const invalidUrl = runCli(
+      ["doctor", "--json", "--config", invalidUrlConfig],
+      { cwd: root },
+    );
+    assert.equal(invalidUrl.status, 0, invalidUrl.stderr);
+    assert.equal(
+      findCheck(JSON.parse(invalidUrl.stdout), "remote-base-url").status,
+      "warn",
+    );
+
+    const queryUrlConfig = join(root, "doctor-query-url.config.mjs");
+    await writeFile(
+      queryUrlConfig,
+      `export default {
+  name: "doctor-query-url",
+  entry: "src/inject.ts",
+  outDir: "dist/doctor-query-url",
+  runtime: "remote",
+  remote: { baseUrl: "https://cdn.example.com/assets/?token=secret" },
+  ttsc: { enabled: false },
+  output: { installHtml: false, manifest: false, report: false },
+};
+`,
+    );
+    const queryUrl = runCli(
+      ["doctor", "--json", "--config", queryUrlConfig],
+      { cwd: root },
+    );
+    assert.equal(queryUrl.status, 0, queryUrl.stderr);
+    assert.equal(
+      findCheck(JSON.parse(queryUrl.stdout), "remote-base-url").status,
+      "warn",
+    );
+
+    const directoryConfig = join(root, "doctor-directories.config.mjs");
+    await writeFile(
+      directoryConfig,
+      `export default {
+  name: "doctor-directories",
+  entry: ".",
+  outDir: "dist/doctor-directories",
+  runtime: "inline",
+  ttsc: { enabled: true, project: "." },
+  output: { installHtml: false, manifest: false, report: false },
+};
+`,
+    );
+    const directories = runCli(
+      ["doctor", "--json", "--config", directoryConfig],
+      { cwd: root, env: withPath(binDir) },
+    );
+    assert.equal(directories.status, 1);
+    const directoryReport = JSON.parse(directories.stdout);
+    assert.equal(findCheck(directoryReport, "entry").status, "fail");
+    assert.equal(findCheck(directoryReport, "ttsc-project").status, "fail");
+  });
+});
+
+test("doctor fails when only part of a build remains", async () => {
+  await withBuildProject(async ({ binDir, root }) => {
+    const env = withPath(binDir);
+    const build = runCli(["build", "--json"], { cwd: root, env });
+    assert.equal(build.status, 0, build.stderr);
+    await rm(join(root, "dist", "custom", "inline", "custom-bookmarklet.txt"));
+
+    const result = runCli(["doctor", "--json"], { cwd: root, env });
+
+    assert.equal(result.status, 1);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.ok, false);
+    const artifacts = findCheck(report, "artifacts");
+    assert.equal(artifacts.status, "fail");
+    assert.match(artifacts.message, /Missing artifact|bookmarklet length/i);
+  });
+});
+
 test("inline short-option values preserve additional equals signs", () => {
   const result = runCli(["inspect", "-c=missing=a=b.mjs"]);
 
@@ -176,6 +427,12 @@ function withPath(binDir) {
   };
 }
 
+function findCheck(report, name) {
+  const check = report.checks.find((candidate) => candidate.name === name);
+  assert.ok(check, `Missing doctor check: ${name}`);
+  return check;
+}
+
 async function withBuildProject(useProject) {
   const root = await mkdtemp(join(tmpdir(), "bmkl-cli-test-"));
   const binDir = join(root, "bin");
@@ -225,8 +482,8 @@ async function withBuildProject(useProject) {
     await writeFile(
       ttscPath,
       process.platform === "win32"
-        ? "@echo ttsc fixture output\r\n"
-        : "#!/bin/sh\necho 'ttsc fixture output'\n",
+        ? '@if not "%BMKL_TTSC_MARKER%"=="" echo ran>"%BMKL_TTSC_MARKER%"\r\n@echo ttsc fixture output\r\n'
+        : '#!/bin/sh\nif [ -n "$BMKL_TTSC_MARKER" ]; then printf ran > "$BMKL_TTSC_MARKER"; fi\necho "ttsc fixture output"\n',
     );
     if (process.platform !== "win32") {
       await chmod(ttscPath, 0o755);

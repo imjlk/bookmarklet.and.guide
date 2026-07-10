@@ -67,6 +67,8 @@ export class BookmarkBuilder {
   ): Promise<BookmarkletBuildResult> {
     const warnings: string[] = [];
     const paths = this.paths();
+    const remoteUrls = this.remoteUrls();
+    const loaderSource = this.generateLoader(remoteUrls.app);
     await this.prepareTtsc(warnings, options);
     await this.typecheck(warnings, options);
 
@@ -82,16 +84,12 @@ export class BookmarkBuilder {
 
     await this.bundle(options);
     const appCode = await readFile(paths.remoteApp, "utf8");
-    const loaderSource = this.generateLoader();
     const bookmarkletSource =
       this.config.runtime === "inline"
         ? appCode
         : createBookmarkletLoader(
             `${this.loaderDomId()}__bookmarklet`,
-            joinUrl(
-              this.config.remote?.baseUrl ?? "",
-              this.config.remote?.loaderPath ?? "loader.js",
-            ),
+            remoteUrls.loader,
           );
     const bookmarkletUrl = toBookmarklet(bookmarkletSource);
     const manifest = createManifest(this.config, appCode);
@@ -541,16 +539,28 @@ export class BookmarkBuilder {
     };
   }
 
-  private generateLoader(): string {
+  private generateLoader(appUrl: string): string {
     return createRemoteScriptLoader({
       id: this.loaderDomId(),
       globalName: this.config.globalName,
-      src: joinUrl(
-        this.config.remote?.baseUrl ?? "",
-        this.config.remote?.appPath ?? "app.iife.js",
-      ),
+      src: appUrl,
       cacheBust: this.config.remote?.cacheBust,
     });
+  }
+
+  private remoteUrls() {
+    const baseUrl = this.config.remote?.baseUrl ?? "";
+    return {
+      app: joinUrl(baseUrl, this.config.remote?.appPath ?? "app.iife.js"),
+      loader: joinUrl(
+        baseUrl,
+        this.config.remote?.loaderPath ?? "loader.js",
+      ),
+      manifest: joinUrl(
+        baseUrl,
+        this.config.remote?.manifestPath ?? "manifest.json",
+      ),
+    };
   }
 
   private paths() {
