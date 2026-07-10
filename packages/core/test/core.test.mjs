@@ -289,6 +289,7 @@ test("BookmarkBuilder rejects artifact paths that escape their output directory"
       }).build(),
       /must resolve to a file, not a directory/,
     );
+    assert.equal(await readFile(outputMarker, "utf8"), "keep");
   });
 });
 
