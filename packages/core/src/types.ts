@@ -56,10 +56,20 @@ export interface BookmarkletBuildConfig {
 export type BookmarkletUserConfig = Partial<BookmarkletBuildConfig> &
   Pick<BookmarkletBuildConfig, "entry" | "name">;
 
+export type BookmarkletConfigOverrides = Omit<
+  Partial<BookmarkletBuildConfig>,
+  "output" | "remote" | "ttsc" | "vite"
+> & {
+  output?: Partial<BookmarkletOutputConfig>;
+  remote?: Partial<BookmarkletRemoteConfig>;
+  ttsc?: Partial<BookmarkletTtscConfig>;
+  vite?: Partial<BookmarkletViteConfig>;
+};
+
 export interface LoadConfigOptions {
   cwd?: string;
   configFile?: string;
-  overrides?: Partial<BookmarkletBuildConfig>;
+  overrides?: BookmarkletConfigOverrides;
 }
 
 export interface DevServerOptions {
@@ -90,6 +100,7 @@ export interface CompanionBuildOptions {
   host?: string;
   outDir?: string;
   port?: number;
+  quiet?: boolean;
   target?: string;
 }
 
@@ -120,6 +131,10 @@ export interface BookmarkletBuildResult {
   artifacts: BookmarkletArtifact[];
   bookmarkletUrl: string;
   warnings: string[];
+}
+
+export interface BookmarkletBuildOptions {
+  quiet?: boolean;
 }
 
 export interface BookmarkletInspectResult {

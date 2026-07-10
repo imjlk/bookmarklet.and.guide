@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 export interface RunCommandOptions {
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  quiet?: boolean;
 }
 
 export async function runCommand(
@@ -15,7 +16,9 @@ export async function runCommand(
       cwd: options.cwd,
       env: { ...process.env, ...options.env },
       shell: process.platform === "win32",
-      stdio: "inherit",
+      stdio: options.quiet
+        ? ["inherit", process.stderr, process.stderr]
+        : "inherit",
     });
 
     child.on("error", reject);

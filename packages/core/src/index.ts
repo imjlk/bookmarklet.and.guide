@@ -15,8 +15,10 @@ export {
 export type {
   BookmarkletArtifact,
   BookmarkletBuildConfig,
+  BookmarkletBuildOptions,
   BookmarkletBuildReport,
   BookmarkletBuildResult,
+  BookmarkletConfigOverrides,
   CompanionBuildOptions,
   CompanionBuildResult,
   BookmarkletInspectResult,

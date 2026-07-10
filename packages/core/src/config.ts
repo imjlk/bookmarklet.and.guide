@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { createJiti } from "jiti";
 import type {
   BookmarkletBuildConfig,
+  BookmarkletConfigOverrides,
   BookmarkletUserConfig,
   LoadConfigOptions,
 } from "./types.js";
@@ -33,12 +34,14 @@ export async function loadConfig(
   const configFile = findConfigFile(cwd, options.configFile);
   const loaded = configFile ? await importConfig(configFile) : {};
   return resolveConfig(
-    {
-      name: "bookmarklet-app",
-      entry: "src/inject.ts",
-      ...loaded,
-      ...options.overrides,
-    },
+    mergeConfigOverrides(
+      {
+        name: "bookmarklet-app",
+        entry: "src/inject.ts",
+        ...loaded,
+      },
+      options.overrides,
+    ),
     configFile ? dirname(configFile) : cwd,
   );
 }
@@ -117,6 +120,55 @@ async function importConfig(path: string): Promise<BookmarkletUserConfig> {
       cause: error,
     });
   }
+}
+
+function mergeConfigOverrides(
+  config: BookmarkletUserConfig,
+  overrides?: BookmarkletConfigOverrides,
+): BookmarkletUserConfig {
+  if (!overrides) {
+    return config;
+  }
+
+  const merged = {
+    ...config,
+    ...definedProperties(overrides),
+  } as BookmarkletUserConfig;
+
+  for (const key of ["output", "remote", "ttsc", "vite"] as const) {
+    const nested = mergeDefined(config[key], overrides[key]);
+    if (nested) {
+      Object.assign(merged, { [key]: nested });
+    } else {
+      delete merged[key];
+    }
+  }
+
+  return merged;
+}
+
+function mergeDefined<T extends object>(
+  base: T | undefined,
+  overrides: Partial<T> | undefined,
+): T | undefined {
+  if (!base && !overrides) {
+    return undefined;
+  }
+
+  return {
+    ...definedProperties(base),
+    ...definedProperties(overrides),
+  } as T;
+}
+
+function definedProperties<T extends object>(value: T | undefined): Partial<T> {
+  if (!value) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).filter(([, property]) => property !== undefined),
+  ) as Partial<T>;
 }
 
 function toGlobalName(name: string): string {

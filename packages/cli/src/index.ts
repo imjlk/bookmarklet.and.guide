@@ -2,7 +2,11 @@ import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
-import { BookmarkBuilder, loadConfig } from "@bmkl/core";
+import {
+  BookmarkBuilder,
+  loadConfig,
+  type BookmarkletConfigOverrides,
+} from "@bmkl/core";
 import {
   DEFAULT_TEMPLATE,
   TEMPLATE_NAMES,
@@ -19,6 +23,12 @@ const CHANNEL_CHOICES = ["dev", "canary", "latest", "pinned"] as const;
 interface ParsedArgs {
   flags: Map<string, string | boolean>;
   positionals: string[];
+}
+
+interface ParseArgsOptions {
+  aliases?: Record<string, string>;
+  booleans?: string[];
+  values?: string[];
 }
 
 interface DoctorCheck {
@@ -49,12 +59,19 @@ async function main(argv: string[]): Promise<void> {
 
   const [commandName, ...rest] = argv;
 
-  if (!commandName || isHelp(commandName)) {
+  if (!commandName) {
+    await printRootHelp();
+    return;
+  }
+
+  if (isHelp(commandName)) {
+    assertNoPositionals(parseArgs(rest), "bmkl --help");
     await printRootHelp();
     return;
   }
 
   if (isVersion(commandName)) {
+    assertNoPositionals(parseArgs(rest), "bmkl --version");
     console.log(VERSION);
     return;
   }
@@ -90,10 +107,9 @@ async function main(argv: string[]): Promise<void> {
       await runContracts(rest);
       return;
     default:
-      console.error(`Unknown command: ${commandName}`);
-      console.error("");
-      await printRootHelp();
-      process.exitCode = 1;
+      throw new Error(
+        `Unknown command: ${commandName}. Run bmkl --help to list commands.`,
+      );
   }
 }
 
@@ -104,9 +120,12 @@ async function runCreate(argv: string[]): Promise<void> {
       t: "template",
     },
     booleans: ["force", "help", "json"],
+    values: ["template"],
   });
 
-  if (has(args, "help")) {
+  assertAtMostPositionals(args, 1, "bmkl create <dir>");
+
+  if (flagBoolean(args, "help")) {
     printCreateHelp();
     return;
   }
@@ -135,7 +154,9 @@ async function runTemplates(argv: string[]): Promise<void> {
     booleans: ["help", "json"],
   });
 
-  if (has(args, "help")) {
+  assertNoPositionals(args, "bmkl templates");
+
+  if (flagBoolean(args, "help")) {
     printTemplatesHelp();
     return;
   }
@@ -155,33 +176,48 @@ async function runBuild(argv: string[]): Promise<void> {
       c: "config",
     },
     booleans: ["help", "json", "print-bookmarklet"],
+    values: ["base-url", "channel", "config", "runtime"],
   });
 
-  if (has(args, "help")) {
+  assertNoPositionals(args, "bmkl build");
+  assertMutuallyExclusive(args, "json", "print-bookmarklet");
+
+  if (flagBoolean(args, "help")) {
     printBuildHelp();
     return;
+  }
+
+  const overrides: BookmarkletConfigOverrides = {};
+  const runtime = validateChoice(
+    "runtime",
+    flagString(args, "runtime"),
+    RUNTIME_CHOICES,
+  );
+  const channel = validateChoice(
+    "channel",
+    flagString(args, "channel"),
+    CHANNEL_CHOICES,
+  );
+  const baseUrl = flagString(args, "base-url");
+  if (runtime) {
+    overrides.runtime = runtime;
+  }
+  if (channel) {
+    overrides.channel = channel;
+  }
+  if (baseUrl) {
+    overrides.remote = { baseUrl };
   }
 
   const config = await loadConfig({
     cwd: getInvocationCwd(),
     configFile: flagString(args, "config"),
-      overrides: {
-        runtime: validateChoice(
-          "runtime",
-          flagString(args, "runtime"),
-          RUNTIME_CHOICES,
-        ),
-        channel: validateChoice(
-          "channel",
-          flagString(args, "channel"),
-          CHANNEL_CHOICES,
-        ),
-        remote: flagString(args, "base-url")
-          ? { baseUrl: String(flagString(args, "base-url")) }
-          : undefined,
-    },
+    overrides,
   });
-  const result = await new BookmarkBuilder(config).build();
+  const result = await new BookmarkBuilder(config).build({
+    quiet:
+      flagBoolean(args, "json") || flagBoolean(args, "print-bookmarklet"),
+  });
 
   if (flagBoolean(args, "print-bookmarklet")) {
     console.log(result.bookmarkletUrl);
@@ -202,9 +238,12 @@ async function runInspect(argv: string[]): Promise<void> {
       c: "config",
     },
     booleans: ["help", "json"],
+    values: ["config"],
   });
 
-  if (has(args, "help")) {
+  assertNoPositionals(args, "bmkl inspect");
+
+  if (flagBoolean(args, "help")) {
     printInspectHelp();
     return;
   }
@@ -229,9 +268,12 @@ async function runInstallPage(argv: string[]): Promise<void> {
       c: "config",
     },
     booleans: ["help", "json"],
+    values: ["config"],
   });
 
-  if (has(args, "help")) {
+  assertNoPositionals(args, "bmkl install-page");
+
+  if (flagBoolean(args, "help")) {
     printInstallPageHelp();
     return;
   }
@@ -240,7 +282,9 @@ async function runInstallPage(argv: string[]): Promise<void> {
     cwd: getInvocationCwd(),
     configFile: flagString(args, "config"),
   });
-  const result = await new BookmarkBuilder(config).build();
+  const result = await new BookmarkBuilder(config).build({
+    quiet: flagBoolean(args, "json"),
+  });
   const installPage = result.artifacts.find(
     (artifact) => artifact.kind === "install-html",
   );
@@ -273,9 +317,12 @@ async function runDev(argv: string[]): Promise<void> {
       p: "port",
     },
     booleans: ["debug", "help", "https", "open", "strict-port"],
+    values: ["config", "host", "port", "target"],
   });
 
-  if (has(args, "help")) {
+  assertNoPositionals(args, "bmkl dev");
+
+  if (flagBoolean(args, "help")) {
     printDevHelp();
     return;
   }
@@ -339,9 +386,19 @@ async function runCompanion(argv: string[]): Promise<void> {
       p: "port",
     },
     booleans: ["help", "json"],
+    values: [
+      "config",
+      "debug-console-url",
+      "host",
+      "out-dir",
+      "port",
+      "target",
+    ],
   });
 
-  if (has(args, "help")) {
+  assertNoPositionals(args, "bmkl companion");
+
+  if (flagBoolean(args, "help")) {
     printCompanionHelp();
     return;
   }
@@ -355,6 +412,7 @@ async function runCompanion(argv: string[]): Promise<void> {
     host: flagString(args, "host") ?? "127.0.0.1",
     outDir: flagString(args, "out-dir"),
     port: flagPort(args, "port") ?? 5173,
+    quiet: flagBoolean(args, "json"),
     target: flagString(args, "target"),
   });
 
@@ -372,9 +430,12 @@ async function runDoctor(argv: string[]): Promise<void> {
       c: "config",
     },
     booleans: ["help", "json"],
+    values: ["config"],
   });
 
-  if (has(args, "help")) {
+  assertNoPositionals(args, "bmkl doctor");
+
+  if (flagBoolean(args, "help")) {
     printDoctorHelp();
     return;
   }
@@ -508,26 +569,33 @@ async function runContracts(argv: string[]): Promise<void> {
     booleans: ["help", "json"],
   });
 
-  if (has(args, "help")) {
+  if (flagBoolean(args, "help")) {
     printContractsHelp();
     return;
   }
 
   const [command, file] = args.positionals;
   if (!command) {
-    printContractsHelp();
-    return;
+    throw new Error("Missing contracts command. Usage: bmkl contracts <command>");
   }
 
   if (command === "smoke") {
+    assertExactPositionals(args, 1, "bmkl contracts smoke");
     const smoke = await runContractSmoke();
     printContractValidationResult("smoke", undefined, smoke, flagBoolean(args, "json"));
     return;
   }
 
-  if (!file) {
-    throw new Error(`Missing file path for bmkl contracts ${command}.`);
+  const validationCommands = new Set([
+    "validate-bridge-message",
+    "validate-debug-event",
+    "validate-debug-report",
+    "validate-manifest",
+  ]);
+  if (!validationCommands.has(command)) {
+    throw new Error(`Unknown contracts command: ${command}`);
   }
+  assertExactPositionals(args, 2, `bmkl contracts ${command} <file>`);
 
   const path = resolve(getInvocationCwd(), file);
   const text = await readFile(path, "utf8");
@@ -553,15 +621,20 @@ async function runContracts(argv: string[]): Promise<void> {
 
 function parseArgs(
   argv: string[],
-  options: {
-    aliases?: Record<string, string>;
-    booleans?: string[];
-  } = {},
+  options: ParseArgsOptions = {},
 ): ParsedArgs {
   const flags = new Map<string, string | boolean>();
   const positionals: string[] = [];
-  const booleans = new Set(options.booleans ?? []);
+  const booleans = new Set(["help", ...(options.booleans ?? [])]);
+  const values = new Set(options.values ?? []);
   const aliases: Record<string, string> = { h: "help", ...options.aliases };
+  const known = new Set([...booleans, ...values]);
+
+  for (const [alias, name] of Object.entries(aliases)) {
+    if (!known.has(name)) {
+      throw new Error(`Invalid CLI parser alias: -${alias} maps to --${name}.`);
+    }
+  }
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -572,31 +645,43 @@ function parseArgs(
     }
 
     if (arg.startsWith("--")) {
-      const [rawName, inlineValue] = arg.slice(2).split("=", 2);
+      const [rawName, inlineValue] = splitOptionArgument(arg, 2);
       const name = aliases[rawName] ?? rawName;
+      assertKnownOption(arg, name, known);
+      assertOptionNotRepeated(flags, name);
       if (booleans.has(name)) {
-        flags.set(name, inlineValue === undefined ? true : inlineValue !== "false");
+        flags.set(name, parseBooleanOption(name, inlineValue));
       } else if (inlineValue !== undefined) {
+        if (inlineValue.length === 0) {
+          throw new Error(`Missing value for --${name}.`);
+        }
         flags.set(name, inlineValue);
-      } else if (argv[index + 1] && !argv[index + 1].startsWith("-")) {
-        flags.set(name, argv[index + 1]);
+      } else if (isOptionValue(argv[index + 1])) {
+        flags.set(name, argv[index + 1] as string);
         index += 1;
       } else {
-        flags.set(name, true);
+        throw new Error(`Missing value for --${name}.`);
       }
       continue;
     }
 
     if (arg.startsWith("-") && arg.length > 1) {
-      const shortName = arg.slice(1);
+      const [shortName, inlineValue] = splitOptionArgument(arg, 1);
       const name = aliases[shortName] ?? shortName;
+      assertKnownOption(arg, name, known);
+      assertOptionNotRepeated(flags, name);
       if (booleans.has(name)) {
-        flags.set(name, true);
-      } else if (argv[index + 1] && !argv[index + 1].startsWith("-")) {
-        flags.set(name, argv[index + 1]);
+        flags.set(name, parseBooleanOption(name, inlineValue));
+      } else if (inlineValue !== undefined) {
+        if (inlineValue.length === 0) {
+          throw new Error(`Missing value for --${name}.`);
+        }
+        flags.set(name, inlineValue);
+      } else if (isOptionValue(argv[index + 1])) {
+        flags.set(name, argv[index + 1] as string);
         index += 1;
       } else {
-        flags.set(name, true);
+        throw new Error(`Missing value for --${name}.`);
       }
       continue;
     }
@@ -605,6 +690,58 @@ function parseArgs(
   }
 
   return { flags, positionals };
+}
+
+function assertKnownOption(
+  arg: string,
+  name: string,
+  known: ReadonlySet<string>,
+): void {
+  if (!name || !known.has(name)) {
+    throw new Error(`Unknown option: ${arg}`);
+  }
+}
+
+function splitOptionArgument(
+  argument: string,
+  prefixLength: number,
+): [name: string, inlineValue: string | undefined] {
+  const equalsIndex = argument.indexOf("=", prefixLength);
+  return equalsIndex === -1
+    ? [argument.slice(prefixLength), undefined]
+    : [
+        argument.slice(prefixLength, equalsIndex),
+        argument.slice(equalsIndex + 1),
+      ];
+}
+
+function assertOptionNotRepeated(
+  flags: ReadonlyMap<string, string | boolean>,
+  name: string,
+): void {
+  if (flags.has(name)) {
+    throw new Error(`Option --${name} may only be provided once.`);
+  }
+}
+
+function parseBooleanOption(
+  name: string,
+  inlineValue: string | undefined,
+): boolean {
+  if (inlineValue === undefined) {
+    return true;
+  }
+  if (inlineValue === "true") {
+    return true;
+  }
+  if (inlineValue === "false") {
+    return false;
+  }
+  throw new Error(`Invalid boolean for --${name}: ${inlineValue}. Use true or false.`);
+}
+
+function isOptionValue(value: string | undefined): value is string {
+  return value !== undefined && value.length > 0 && !value.startsWith("-");
 }
 
 async function printRootHelp(): Promise<void> {
@@ -909,8 +1046,41 @@ function createBuildSummary(
   };
 }
 
-function has(args: ParsedArgs, name: string): boolean {
-  return args.flags.has(name);
+function assertNoPositionals(args: ParsedArgs, usage: string): void {
+  assertExactPositionals(args, 0, usage);
+}
+
+function assertAtMostPositionals(
+  args: ParsedArgs,
+  maximum: number,
+  usage: string,
+): void {
+  if (args.positionals.length > maximum) {
+    throw new Error(
+      `Unexpected argument: ${args.positionals[maximum]}. Usage: ${usage}`,
+    );
+  }
+}
+
+function assertExactPositionals(
+  args: ParsedArgs,
+  expected: number,
+  usage: string,
+): void {
+  if (args.positionals.length < expected) {
+    throw new Error(`Missing argument. Usage: ${usage}`);
+  }
+  assertAtMostPositionals(args, expected, usage);
+}
+
+function assertMutuallyExclusive(
+  args: ParsedArgs,
+  first: string,
+  second: string,
+): void {
+  if (flagBoolean(args, first) && flagBoolean(args, second)) {
+    throw new Error(`Options --${first} and --${second} cannot be used together.`);
+  }
 }
 
 function flagBoolean(args: ParsedArgs, name: string): boolean {
@@ -1053,10 +1223,29 @@ function isTypiaTransformMissing(error: unknown): boolean {
   return error instanceof Error && error.message.includes("no transform has been configured");
 }
 
-main(process.argv.slice(2)).catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
+const cliArgv = process.argv.slice(2);
+
+main(cliArgv).catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  if (hasEnabledJsonFlag(cliArgv)) {
+    console.log(JSON.stringify({ ok: false, error: { message } }, null, 2));
+  } else {
+    console.error(message);
+  }
   if (process.env.BMKL_DEBUG && error instanceof Error && error.stack) {
     console.error(error.stack);
   }
   process.exitCode = 1;
 });
+
+function hasEnabledJsonFlag(argv: string[]): boolean {
+  for (const arg of argv) {
+    if (arg === "--") {
+      return false;
+    }
+    if (arg === "--json" || arg === "--json=true") {
+      return true;
+    }
+  }
+  return false;
+}

@@ -44,6 +44,7 @@ import { createBuildReport } from "./report.js";
 import type {
   BookmarkletArtifact,
   BookmarkletBuildConfig,
+  BookmarkletBuildOptions,
   BookmarkletBuildResult,
   BookmarkletInspectResult,
   CompanionBuildOptions,
@@ -59,11 +60,13 @@ export class BookmarkBuilder {
     this.config = config;
   }
 
-  async build(): Promise<BookmarkletBuildResult> {
+  async build(
+    options: BookmarkletBuildOptions = {},
+  ): Promise<BookmarkletBuildResult> {
     const warnings: string[] = [];
     const paths = this.paths();
-    await this.prepareTtsc(warnings);
-    await this.typecheck(warnings);
+    await this.prepareTtsc(warnings, options);
+    await this.typecheck(warnings, options);
 
     await assertOutputDirFilesystemBoundary(
       this.config.root,
@@ -75,7 +78,7 @@ export class BookmarkBuilder {
     await ensureDir(paths.inlineDir);
     await ensureDir(paths.metaDir);
 
-    await this.bundle();
+    await this.bundle(options);
     const appCode = await readFile(paths.remoteApp, "utf8");
     const loaderSource = this.generateLoader();
     const bookmarkletSource =
@@ -381,19 +384,28 @@ export class BookmarkBuilder {
     return buildCompanionExtension(this.config, options);
   }
 
-  private async prepareTtsc(warnings: string[]): Promise<void> {
+  private async prepareTtsc(
+    warnings: string[],
+    options: BookmarkletBuildOptions,
+  ): Promise<void> {
     if (!this.config.ttsc?.enabled || !this.config.ttsc.prepare) {
       return;
     }
 
     try {
-      await runCommand("ttsc", ["--version"], { cwd: this.config.root });
+      await runCommand("ttsc", ["--version"], {
+        cwd: this.config.root,
+        quiet: options.quiet,
+      });
     } catch (error) {
       warnings.push(toMessage(error));
     }
   }
 
-  private async typecheck(warnings: string[]): Promise<void> {
+  private async typecheck(
+    warnings: string[],
+    options: BookmarkletBuildOptions,
+  ): Promise<void> {
     if (!this.config.ttsc?.enabled || !this.config.ttsc.typecheck) {
       return;
     }
@@ -402,6 +414,7 @@ export class BookmarkBuilder {
     try {
       await runCommand("ttsc", ["--noEmit", "--project", project], {
         cwd: this.config.root,
+        quiet: options.quiet,
       });
     } catch (error) {
       warnings.push("ttsc typecheck failed.");
@@ -409,7 +422,7 @@ export class BookmarkBuilder {
     }
   }
 
-  private async bundle(): Promise<void> {
+  private async bundle(options: BookmarkletBuildOptions): Promise<void> {
     const paths = this.paths();
     const configFile = this.config.vite?.configFile ?? undefined;
     const entry = resolveFrom(this.config.root, this.config.entry);
@@ -425,6 +438,7 @@ export class BookmarkBuilder {
             configFile,
           },
           {
+            ...(options.quiet ? { logLevel: "silent" as const } : {}),
             build: {
               emptyOutDir: false,
               lib: {

@@ -77,6 +77,7 @@ export async function buildCompanionExtension(
             configFile: config.vite?.configFile ?? undefined,
           },
           {
+            ...(options.quiet ? { logLevel: "silent" as const } : {}),
             build: {
               emptyOutDir: false,
               lib: {

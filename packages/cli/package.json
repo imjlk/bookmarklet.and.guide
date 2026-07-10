@@ -28,6 +28,8 @@
     "clean": "node ../../scripts/clean-package.mjs",
     "dev": "tsx src/index.ts",
     "prepack": "pnpm --filter @bmkl/cli... build",
+    "pretest": "pnpm --filter @bmkl/cli... build",
+    "test": "node --test test/*.test.mjs",
     "typecheck": "ttsc --noEmit"
   },
   "dependencies": {
