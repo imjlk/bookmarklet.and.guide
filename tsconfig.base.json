@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "paths": {
+      "@bmkl/contracts": ["./packages/contracts/src/index.ts"],
+      "@bmkl/core": ["./packages/core/src/index.ts"],
+      "@bmkl/runtime": ["./packages/runtime/src/index.ts"],
+      "@bmkl/templates": ["./packages/templates/src/index.ts"],
+      "@bmkl/vite": ["./packages/vite/src/index.ts"]
+    },
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  }
+}

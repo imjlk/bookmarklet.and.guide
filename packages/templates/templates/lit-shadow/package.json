@@ -1,0 +1,31 @@
+{
+  "name": "__BMKL_PROJECT_NAME__",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "bmkl build",
+    "doctor": "bmkl doctor",
+    "graph": "ttsc-graph",
+    "inspect": "bmkl inspect",
+    "install-page": "bmkl install-page",
+    "typecheck": "ttsc --noEmit"
+  },
+  "dependencies": {
+    "@bmkl/runtime": "workspace:*",
+    "lit": "^3.3.3"
+  },
+  "devDependencies": {
+    "@bmkl/cli": "workspace:*",
+    "@bmkl/core": "workspace:*",
+    "@bmkl/vite": "workspace:*",
+    "@ttsc/graph": "^0.18.0",
+    "@ttsc/lint": "^0.18.0",
+    "@ttsc/paths": "^0.18.0",
+    "@ttsc/strip": "^0.18.0",
+    "ttsc": "^0.18.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.4"
+  }
+}

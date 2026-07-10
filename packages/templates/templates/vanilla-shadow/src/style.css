@@ -1,0 +1,36 @@
+.bmkl-panel {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  width: min(360px, calc(100vw - 40px));
+  padding: 16px;
+  border: 1px solid rgba(20, 28, 35, 0.16);
+  border-radius: 8px;
+  background: color-mix(in srgb, Canvas 94%, transparent);
+  color: CanvasText;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.22);
+}
+
+.bmkl-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 760;
+}
+
+.bmkl-panel button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 12px;
+  background: #202a31;
+  color: white;
+  font: inherit;
+  cursor: pointer;
+}
+
+.bmkl-panel [data-action="close"] {
+  width: 34px;
+  padding: 0;
+}

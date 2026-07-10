@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "rootDir": ".",
+    "outDir": "dist/ttsc",
+    "paths": {
+      "@app/*": ["./src/*.ts"]
+    },
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "plugins": [
+      { "transform": "@ttsc/lint", "configFile": "./lint.config.json" },
+      { "transform": "@ttsc/strip", "configFile": "./strip.config.json" },
+      { "transform": "@ttsc/paths" }
+    ]
+  },
+  "include": ["src", "bookmarklet.config.ts", "vite.config.ts"],
+  "exclude": ["src/publicApi.ts"]
+}

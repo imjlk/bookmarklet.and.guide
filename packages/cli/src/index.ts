@@ -1,0 +1,1062 @@
+import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { relative, resolve } from "node:path";
+import { BookmarkBuilder, loadConfig } from "@bmkl/core";
+import {
+  DEFAULT_TEMPLATE,
+  TEMPLATE_NAMES,
+  createProject,
+  listTemplateInfos,
+  type CreateProjectResult,
+  type TemplateInfo,
+} from "@bmkl/templates";
+
+const VERSION = "0.1.0";
+const RUNTIME_CHOICES = ["inline", "remote"] as const;
+const CHANNEL_CHOICES = ["dev", "canary", "latest", "pinned"] as const;
+
+interface ParsedArgs {
+  flags: Map<string, string | boolean>;
+  positionals: string[];
+}
+
+interface DoctorCheck {
+  name: string;
+  status: "pass" | "warn" | "fail";
+  message: string;
+}
+
+interface ContractSmokeResult {
+  ok: true;
+  bridgeType: string;
+  debugEventType: string;
+  manifestRuntime: string;
+}
+
+interface ContractsModule {
+  assertBmklBridgeMessage(input: unknown): unknown;
+  assertBmklDebugReport(input: unknown): unknown;
+  parseBmklDebugEventJson(input: string): unknown;
+  parseBmklRemoteManifestJson(input: string): unknown;
+  runBmklContractSmoke(): ContractSmokeResult;
+}
+
+async function main(argv: string[]): Promise<void> {
+  while (argv[0] === "--") {
+    argv.shift();
+  }
+
+  const [commandName, ...rest] = argv;
+
+  if (!commandName || isHelp(commandName)) {
+    await printRootHelp();
+    return;
+  }
+
+  if (isVersion(commandName)) {
+    console.log(VERSION);
+    return;
+  }
+
+  switch (commandName) {
+    case "create":
+    case "init":
+      await runCreate(rest);
+      return;
+    case "templates":
+      await runTemplates(rest);
+      return;
+    case "dev":
+      await runDev(rest);
+      return;
+    case "companion":
+      await runCompanion(rest);
+      return;
+    case "build":
+      await runBuild(rest);
+      return;
+    case "inspect":
+      await runInspect(rest);
+      return;
+    case "install-page":
+      await runInstallPage(rest);
+      return;
+    case "doctor":
+      await runDoctor(rest);
+      return;
+    case "contracts":
+    case "contract":
+      await runContracts(rest);
+      return;
+    default:
+      console.error(`Unknown command: ${commandName}`);
+      console.error("");
+      await printRootHelp();
+      process.exitCode = 1;
+  }
+}
+
+async function runCreate(argv: string[]): Promise<void> {
+  const args = parseArgs(argv, {
+    aliases: {
+      f: "force",
+      t: "template",
+    },
+    booleans: ["force", "help", "json"],
+  });
+
+  if (has(args, "help")) {
+    printCreateHelp();
+    return;
+  }
+
+  const target = args.positionals[0];
+  if (!target) {
+    throw new Error("Missing project directory. Usage: bmkl create <dir>");
+  }
+
+  const result = await createProject({
+    destination: resolve(getInvocationCwd(), target),
+    force: flagBoolean(args, "force"),
+    template: flagString(args, "template") ?? DEFAULT_TEMPLATE,
+  });
+
+  if (flagBoolean(args, "json")) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  printCreateResult(result, detectPackageManager());
+}
+
+async function runTemplates(argv: string[]): Promise<void> {
+  const args = parseArgs(argv, {
+    booleans: ["help", "json"],
+  });
+
+  if (has(args, "help")) {
+    printTemplatesHelp();
+    return;
+  }
+
+  const templates = await listTemplateInfos();
+  if (flagBoolean(args, "json")) {
+    console.log(JSON.stringify(templates, null, 2));
+    return;
+  }
+
+  printTemplateInfos(templates);
+}
+
+async function runBuild(argv: string[]): Promise<void> {
+  const args = parseArgs(argv, {
+    aliases: {
+      c: "config",
+    },
+    booleans: ["help", "json", "print-bookmarklet"],
+  });
+
+  if (has(args, "help")) {
+    printBuildHelp();
+    return;
+  }
+
+  const config = await loadConfig({
+    cwd: getInvocationCwd(),
+    configFile: flagString(args, "config"),
+      overrides: {
+        runtime: validateChoice(
+          "runtime",
+          flagString(args, "runtime"),
+          RUNTIME_CHOICES,
+        ),
+        channel: validateChoice(
+          "channel",
+          flagString(args, "channel"),
+          CHANNEL_CHOICES,
+        ),
+        remote: flagString(args, "base-url")
+          ? { baseUrl: String(flagString(args, "base-url")) }
+          : undefined,
+    },
+  });
+  const result = await new BookmarkBuilder(config).build();
+
+  if (flagBoolean(args, "print-bookmarklet")) {
+    console.log(result.bookmarkletUrl);
+    return;
+  }
+
+  if (flagBoolean(args, "json")) {
+    console.log(JSON.stringify(createBuildSummary(result), null, 2));
+    return;
+  }
+
+  printBuildResult(result);
+}
+
+async function runInspect(argv: string[]): Promise<void> {
+  const args = parseArgs(argv, {
+    aliases: {
+      c: "config",
+    },
+    booleans: ["help", "json"],
+  });
+
+  if (has(args, "help")) {
+    printInspectHelp();
+    return;
+  }
+
+  const config = await loadConfig({
+    cwd: getInvocationCwd(),
+    configFile: flagString(args, "config"),
+  });
+  const result = await new BookmarkBuilder(config).inspect();
+
+  if (flagBoolean(args, "json")) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  printInspectResult(result);
+}
+
+async function runInstallPage(argv: string[]): Promise<void> {
+  const args = parseArgs(argv, {
+    aliases: {
+      c: "config",
+    },
+    booleans: ["help", "json"],
+  });
+
+  if (has(args, "help")) {
+    printInstallPageHelp();
+    return;
+  }
+
+  const config = await loadConfig({
+    cwd: getInvocationCwd(),
+    configFile: flagString(args, "config"),
+  });
+  const result = await new BookmarkBuilder(config).build();
+  const installPage = result.artifacts.find(
+    (artifact) => artifact.kind === "install-html",
+  );
+
+  if (flagBoolean(args, "json")) {
+    console.log(
+      JSON.stringify(
+        {
+          path: installPage?.path,
+          relativePath: installPage
+            ? relative(config.root, installPage.path)
+            : undefined,
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+
+  if (installPage) {
+    console.log(installPage.path);
+  }
+}
+
+async function runDev(argv: string[]): Promise<void> {
+  const args = parseArgs(argv, {
+    aliases: {
+      c: "config",
+      p: "port",
+    },
+    booleans: ["debug", "help", "https", "open", "strict-port"],
+  });
+
+  if (has(args, "help")) {
+    printDevHelp();
+    return;
+  }
+
+  const config = await loadConfig({
+    cwd: getInvocationCwd(),
+    configFile: flagString(args, "config"),
+  });
+  const server = await new BookmarkBuilder(config).dev({
+    debug: flagBoolean(args, "debug"),
+    host: flagString(args, "host") ?? "127.0.0.1",
+    https: flagBoolean(args, "https"),
+    port: flagPort(args, "port") ?? 5173,
+    strictPort: flagBoolean(args, "strict-port"),
+    open: flagBoolean(args, "open"),
+    target: flagString(args, "target"),
+  });
+
+  console.log(`Vite: ${server.url}`);
+  if (server.debugConsoleUrl) {
+    console.log(`Debug console: ${server.debugConsoleUrl}`);
+  }
+  if (server.target) {
+    console.log(`Target: ${server.target}`);
+  }
+  console.log("");
+  console.log("Install-once dev bookmarklet:");
+  console.log(server.launcherBookmarkletUrl);
+  console.log("");
+  console.log("Dev bookmarklet:");
+  console.log(server.bookmarkletUrl);
+  console.log("");
+  if (server.debugBookmarkletUrl) {
+    if (server.debugLauncherBookmarkletUrl) {
+      console.log("Install-once debug bookmarklet:");
+      console.log(server.debugLauncherBookmarkletUrl);
+      console.log("");
+    }
+    console.log("Debug bookmarklet:");
+    console.log(server.debugBookmarkletUrl);
+    console.log("");
+    printDevDebugFlow(server.target);
+  } else {
+    console.log("Install it by creating a browser bookmark with the URL above.");
+  }
+
+  await new Promise<void>((resolvePromise) => {
+    const close = async () => {
+      await server.close();
+      resolvePromise();
+    };
+    process.once("SIGINT", close);
+    process.once("SIGTERM", close);
+  });
+}
+
+async function runCompanion(argv: string[]): Promise<void> {
+  const args = parseArgs(argv, {
+    aliases: {
+      c: "config",
+      p: "port",
+    },
+    booleans: ["help", "json"],
+  });
+
+  if (has(args, "help")) {
+    printCompanionHelp();
+    return;
+  }
+
+  const config = await loadConfig({
+    cwd: getInvocationCwd(),
+    configFile: flagString(args, "config"),
+  });
+  const result = await new BookmarkBuilder(config).companion({
+    debugConsoleUrl: flagString(args, "debug-console-url"),
+    host: flagString(args, "host") ?? "127.0.0.1",
+    outDir: flagString(args, "out-dir"),
+    port: flagPort(args, "port") ?? 5173,
+    target: flagString(args, "target"),
+  });
+
+  if (flagBoolean(args, "json")) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  printCompanionResult(config.root, result);
+}
+
+async function runDoctor(argv: string[]): Promise<void> {
+  const args = parseArgs(argv, {
+    aliases: {
+      c: "config",
+    },
+    booleans: ["help", "json"],
+  });
+
+  if (has(args, "help")) {
+    printDoctorHelp();
+    return;
+  }
+
+  const config = await loadConfig({
+    cwd: getInvocationCwd(),
+    configFile: flagString(args, "config"),
+  });
+  const checks: DoctorCheck[] = [];
+
+  const entryPath = resolve(config.root, config.entry);
+  checks.push(
+    existsSync(entryPath)
+      ? {
+          name: "entry",
+          status: "pass",
+          message: `Found ${relative(config.root, entryPath)}`,
+        }
+      : {
+          name: "entry",
+          status: "fail",
+          message: `Missing ${relative(config.root, entryPath)}`,
+        },
+  );
+
+  const tsconfigPath = resolve(config.root, config.ttsc?.project ?? "tsconfig.json");
+  checks.push(
+    !config.ttsc?.enabled || existsSync(tsconfigPath)
+      ? {
+          name: "ttsc-project",
+          status: "pass",
+          message: config.ttsc?.enabled
+            ? `Found ${relative(config.root, tsconfigPath)}`
+            : "ttsc checks are disabled",
+        }
+      : {
+          name: "ttsc-project",
+          status: "fail",
+          message: `Missing ${relative(config.root, tsconfigPath)}`,
+        },
+  );
+
+  const ttscVersion = spawnSync("ttsc", ["--version"], {
+    cwd: config.root,
+    encoding: "utf8",
+  });
+  checks.push(
+    !config.ttsc?.enabled || ttscVersion.status === 0
+      ? {
+          name: "ttsc-binary",
+          status: "pass",
+          message: config.ttsc?.enabled
+            ? ttscVersion.stdout.trim()
+            : "ttsc checks are disabled",
+        }
+      : {
+          name: "ttsc-binary",
+          status: "fail",
+          message: "Could not run ttsc --version",
+        },
+  );
+
+  try {
+    const smoke = await runContractSmoke();
+    checks.push({
+      name: "typia-contracts",
+      status: "pass",
+      message: `${smoke.debugEventType}, ${smoke.bridgeType}, ${smoke.manifestRuntime}`,
+    });
+  } catch (error) {
+    checks.push({
+      name: "typia-contracts",
+      status: "fail",
+      message:
+        error instanceof Error
+          ? error.message
+          : "typia contract smoke failed",
+    });
+  }
+
+  checks.push(
+    config.remote?.baseUrl &&
+      !config.remote.baseUrl.includes("example.com") &&
+      /^https?:\/\//.test(config.remote.baseUrl)
+      ? {
+          name: "remote-base-url",
+          status: "pass",
+          message: config.remote.baseUrl,
+        }
+      : {
+          name: "remote-base-url",
+          status: "warn",
+          message:
+            "remote.baseUrl is still the default or is not an absolute URL.",
+        },
+  );
+
+  const inspect = await new BookmarkBuilder(config).inspect();
+  checks.push(
+    inspect.artifacts.length > 0
+      ? {
+          name: "artifacts",
+          status: "pass",
+          message: `Found ${inspect.artifacts.length} generated artifact(s).`,
+        }
+      : {
+          name: "artifacts",
+          status: "warn",
+          message: "Run bmkl build to generate bookmarklet artifacts.",
+        },
+  );
+
+  const report = {
+    checks,
+    ok: checks.every((check) => check.status !== "fail"),
+  };
+
+  if (flagBoolean(args, "json")) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    printDoctorResult(checks);
+  }
+
+  if (!report.ok) {
+    process.exitCode = 1;
+  }
+}
+
+async function runContracts(argv: string[]): Promise<void> {
+  const args = parseArgs(argv, {
+    booleans: ["help", "json"],
+  });
+
+  if (has(args, "help")) {
+    printContractsHelp();
+    return;
+  }
+
+  const [command, file] = args.positionals;
+  if (!command) {
+    printContractsHelp();
+    return;
+  }
+
+  if (command === "smoke") {
+    const smoke = await runContractSmoke();
+    printContractValidationResult("smoke", undefined, smoke, flagBoolean(args, "json"));
+    return;
+  }
+
+  if (!file) {
+    throw new Error(`Missing file path for bmkl contracts ${command}.`);
+  }
+
+  const path = resolve(getInvocationCwd(), file);
+  const text = await readFile(path, "utf8");
+  let value: unknown;
+
+  value = await withContractsModule((contracts) => {
+    switch (command) {
+      case "validate-debug-event":
+        return contracts.parseBmklDebugEventJson(text);
+      case "validate-debug-report":
+        return contracts.assertBmklDebugReport(JSON.parse(text));
+      case "validate-manifest":
+        return contracts.parseBmklRemoteManifestJson(text);
+      case "validate-bridge-message":
+        return contracts.assertBmklBridgeMessage(JSON.parse(text));
+      default:
+        throw new Error(`Unknown contracts command: ${command}`);
+    }
+  });
+
+  printContractValidationResult(command, path, value, flagBoolean(args, "json"));
+}
+
+function parseArgs(
+  argv: string[],
+  options: {
+    aliases?: Record<string, string>;
+    booleans?: string[];
+  } = {},
+): ParsedArgs {
+  const flags = new Map<string, string | boolean>();
+  const positionals: string[] = [];
+  const booleans = new Set(options.booleans ?? []);
+  const aliases: Record<string, string> = { h: "help", ...options.aliases };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+
+    if (arg === "--") {
+      positionals.push(...argv.slice(index + 1));
+      break;
+    }
+
+    if (arg.startsWith("--")) {
+      const [rawName, inlineValue] = arg.slice(2).split("=", 2);
+      const name = aliases[rawName] ?? rawName;
+      if (booleans.has(name)) {
+        flags.set(name, inlineValue === undefined ? true : inlineValue !== "false");
+      } else if (inlineValue !== undefined) {
+        flags.set(name, inlineValue);
+      } else if (argv[index + 1] && !argv[index + 1].startsWith("-")) {
+        flags.set(name, argv[index + 1]);
+        index += 1;
+      } else {
+        flags.set(name, true);
+      }
+      continue;
+    }
+
+    if (arg.startsWith("-") && arg.length > 1) {
+      const shortName = arg.slice(1);
+      const name = aliases[shortName] ?? shortName;
+      if (booleans.has(name)) {
+        flags.set(name, true);
+      } else if (argv[index + 1] && !argv[index + 1].startsWith("-")) {
+        flags.set(name, argv[index + 1]);
+        index += 1;
+      } else {
+        flags.set(name, true);
+      }
+      continue;
+    }
+
+    positionals.push(arg);
+  }
+
+  return { flags, positionals };
+}
+
+async function printRootHelp(): Promise<void> {
+  console.log(`bmkl ${VERSION}`);
+  console.log("Create Vite-powered bookmarklets and build installable artifacts.");
+  console.log("");
+  console.log("Usage:");
+  console.log("  bmkl create <dir> [--template lit-shadow]");
+  console.log("  bmkl templates [--json]");
+  console.log("  bmkl dev [--open]");
+  console.log("  bmkl companion [--target https://example.com]");
+  console.log("  bmkl build [--base-url https://cdn.example.com/bookmarklet/]");
+  console.log("  bmkl inspect [--json]");
+  console.log("  bmkl doctor");
+  console.log("  bmkl contracts smoke");
+  console.log("  bmkl install-page");
+  console.log("");
+  console.log("Create-package entrypoints:");
+  console.log("  npm create bmkl@latest my-bookmarklet -- --template lit-shadow");
+  console.log("  pnpm create bmkl my-bookmarklet --template ttsc-shadow");
+  console.log("  pnpm create bmkl my-bookmarklet --template solid-query-shadow");
+  console.log("  bun create bmkl my-bookmarklet --template vanilla-shadow");
+  console.log("");
+  console.log("Aliases:");
+  console.log("  bmk is the short binary alias");
+  console.log("  bmkl init is an alias for bmkl create");
+  console.log("");
+  printTemplateInfos(await listTemplateInfos());
+}
+
+function printCreateHelp(): void {
+  console.log("Usage:");
+  console.log("  bmkl create <dir> [options]");
+  console.log("");
+  console.log("Options:");
+  console.log(`  -t, --template <name>   Template (${TEMPLATE_NAMES.join(" | ")})`);
+  console.log("  -f, --force             Write into a non-empty directory");
+  console.log("  --json                  Print created project metadata as JSON");
+  console.log("  -h, --help              Show this help");
+}
+
+function printTemplatesHelp(): void {
+  console.log("Usage:");
+  console.log("  bmkl templates [--json]");
+  console.log("");
+  console.log("Options:");
+  console.log("  --json      Print template metadata as JSON");
+  console.log("  -h, --help  Show this help");
+}
+
+function printBuildHelp(): void {
+  console.log("Usage:");
+  console.log("  bmkl build [options]");
+  console.log("");
+  console.log("Options:");
+  console.log("  -c, --config <file>       Path to bookmarklet config file");
+  console.log("  --runtime <runtime>       inline | remote");
+  console.log("  --channel <channel>       dev | canary | latest | pinned");
+  console.log("  --base-url <url>          Override remote.baseUrl");
+  console.log("  --print-bookmarklet       Print only the bookmarklet URL");
+  console.log("  --json                    Print build metadata as JSON");
+  console.log("  -h, --help                Show this help");
+}
+
+function printInspectHelp(): void {
+  console.log("Usage:");
+  console.log("  bmkl inspect [options]");
+  console.log("");
+  console.log("Options:");
+  console.log("  -c, --config <file>  Path to bookmarklet config file");
+  console.log("  --json               Print inspection result as JSON");
+  console.log("  -h, --help           Show this help");
+}
+
+function printInstallPageHelp(): void {
+  console.log("Usage:");
+  console.log("  bmkl install-page [options]");
+  console.log("");
+  console.log("Options:");
+  console.log("  -c, --config <file>  Path to bookmarklet config file");
+  console.log("  --json               Print install page metadata as JSON");
+  console.log("  -h, --help           Show this help");
+}
+
+function printDevHelp(): void {
+  console.log("Usage:");
+  console.log("  bmkl dev [options]");
+  console.log("");
+  console.log("Options:");
+  console.log("  -c, --config <file>  Path to bookmarklet config file");
+  console.log("  --debug             Print a debug bookmarklet and serve the local debug console");
+  console.log("  --host <host>        Dev server host (default: 127.0.0.1)");
+  console.log("  --https             Serve the dev module and debug console over HTTPS");
+  console.log("  -p, --port <port>    Dev server port (default: 5173)");
+  console.log("  --strict-port        Fail instead of moving to another port");
+  console.log("  --open               Open the Vite preview page");
+  console.log("  --target <url>       Target site URL to print in the debug test flow");
+  console.log("  -h, --help           Show this help");
+}
+
+function printDevDebugFlow(target?: string): void {
+  console.log("Target-site debug flow:");
+  console.log(`  1. Open ${target ?? "the real target site"} in your browser.`);
+  console.log("  2. Create a bookmark named BMKL debug with the Install-once debug bookmarklet URL above.");
+  console.log("  3. Click BMKL debug while you are on the target site.");
+  console.log("  4. Reproduce the issue and watch the terminal, local console, and in-page overlay.");
+  console.log("  5. Keep the console window open when popup policy allows it; direct localhost collection still runs.");
+  console.log("  6. If CSP, popup policy, or the bridge blocks delivery, click Copy report in the overlay.");
+  console.log("  7. Keep using the same bookmark while the dev host and port stay the same.");
+  console.log("  8. If script-src or strict inline policy blocks the bookmarklet path, build a companion extension with bmkl companion.");
+}
+
+function printCompanionHelp(): void {
+  console.log("Build an unpacked Chrome MV3 extension for strict CSP target-site testing.");
+  console.log("");
+  console.log("Usage:");
+  console.log("  bmkl companion [options]");
+  console.log("");
+  console.log("Options:");
+  console.log("  -c, --config <file>          Path to bookmarklet config file");
+  console.log("  --target <url-or-pattern>    Target URL or Chrome match pattern (default: <all_urls>)");
+  console.log("  --debug-console-url <url>    Debug console URL (default: http://127.0.0.1:5173/__bmkl/debug)");
+  console.log("  --host <host>                Debug console host when URL is not provided");
+  console.log("  -p, --port <port>            Debug console port when URL is not provided");
+  console.log("  --out-dir <dir>              Extension output directory");
+  console.log("  --json                       Print companion metadata as JSON");
+  console.log("  -h, --help                   Show this help");
+}
+
+function printDoctorHelp(): void {
+  console.log("Usage:");
+  console.log("  bmkl doctor [options]");
+  console.log("");
+  console.log("Options:");
+  console.log("  -c, --config <file>  Path to bookmarklet config file");
+  console.log("  --json               Print diagnostic report as JSON");
+  console.log("  -h, --help           Show this help");
+}
+
+function printContractsHelp(): void {
+  console.log("Usage:");
+  console.log("  bmkl contracts smoke [--json]");
+  console.log("  bmkl contracts validate-debug-event <file> [--json]");
+  console.log("  bmkl contracts validate-debug-report <file> [--json]");
+  console.log("  bmkl contracts validate-manifest <file> [--json]");
+  console.log("  bmkl contracts validate-bridge-message <file> [--json]");
+  console.log("");
+  console.log("Options:");
+  console.log("  --json      Print validation result as JSON");
+  console.log("  -h, --help  Show this help");
+}
+
+function printCreateResult(
+  result: CreateProjectResult,
+  packageManager: string,
+): void {
+  console.log(
+    `Created ${result.template.name} (${result.template.title}) at ${result.destination}`,
+  );
+  console.log("");
+  console.log("Next:");
+  console.log(`  cd ${result.destination}`);
+  console.log(`  ${installCommand(packageManager)}`);
+  console.log(`  ${runCommand(packageManager, "dev")}`);
+  console.log("");
+  console.log("Build artifacts:");
+  console.log(`  ${runCommand(packageManager, "build")}`);
+  console.log(`  ${runCommand(packageManager, "inspect")}`);
+}
+
+function printTemplateInfos(templates: TemplateInfo[]): void {
+  console.log("Vite templates:");
+  for (const template of templates) {
+    const defaultMarker = template.name === DEFAULT_TEMPLATE ? " (default)" : "";
+    console.log(`  ${template.name}${defaultMarker}`);
+    console.log(`    ${template.title} · ${template.language}`);
+    console.log(`    ${template.description}`);
+    console.log(`    Best for: ${template.recommendedFor}`);
+  }
+  console.log("");
+  console.log("Create with:");
+  console.log("  bmkl create my-bookmarklet --template lit-shadow");
+}
+
+function printBuildResult(
+  result: Awaited<ReturnType<BookmarkBuilder["build"]>>,
+): void {
+  console.log(`Built ${result.config.name}`);
+  console.log(`Runtime: ${result.config.runtime} / Channel: ${result.config.channel}`);
+  console.log("");
+  console.log("Artifacts:");
+  for (const artifact of result.artifacts) {
+    console.log(
+      `  ${artifact.kind.padEnd(12)} ${relative(result.config.root, artifact.path)} (${formatBytes(artifact.size)})`,
+    );
+  }
+
+  const bookmarklet = result.artifacts.find(
+    (artifact) =>
+      artifact.kind === "bookmarklet" && artifact.path.includes("/remote/"),
+  );
+  const installPage = result.artifacts.find(
+    (artifact) => artifact.kind === "install-html",
+  );
+
+  console.log("");
+  if (bookmarklet) {
+    console.log(`Bookmarklet file: ${relative(result.config.root, bookmarklet.path)}`);
+  }
+  if (installPage) {
+    console.log(`Install page: ${relative(result.config.root, installPage.path)}`);
+  }
+  console.log("Raw URL: bmkl build --print-bookmarklet");
+
+  for (const warning of result.warnings) {
+    console.warn(`warning: ${warning}`);
+  }
+}
+
+function printInspectResult(
+  result: Awaited<ReturnType<BookmarkBuilder["inspect"]>>,
+): void {
+  console.log(`Bookmarklet length: ${result.bookmarkletLength} chars`);
+  console.log("");
+  console.log("Artifacts:");
+  for (const artifact of result.artifacts) {
+    console.log(`  ${artifact.kind.padEnd(12)} ${artifact.fileName} (${formatBytes(artifact.size)})`);
+  }
+
+  if (result.manifest) {
+    console.log("");
+    console.log(
+      `Manifest: ${result.manifest.runtime}/${result.manifest.channel} -> ${result.manifest.entry}`,
+    );
+  }
+
+  for (const warning of result.warnings) {
+    console.warn(`warning: ${warning}`);
+  }
+}
+
+function printCompanionResult(
+  root: string,
+  result: Awaited<ReturnType<BookmarkBuilder["companion"]>>,
+): void {
+  console.log("Built BMKL companion extension");
+  console.log("");
+  console.log(`Extension: ${relative(root, result.outDir)}`);
+  console.log(`Manifest:  ${relative(root, result.manifestPath)}`);
+  console.log(`Content:   ${relative(root, result.contentScriptPath)}`);
+  console.log(`Target:    ${result.targetMatch}`);
+  console.log(`Console:   ${result.debugConsoleUrl}`);
+  console.log("");
+  console.log("Companion test flow:");
+  console.log("  1. Run bmkl dev --debug --target <same target> in this project.");
+  console.log("  2. Open chrome://extensions and enable Developer mode.");
+  console.log("  3. Load the Extension directory above as an unpacked extension.");
+  console.log("  4. Open a strict CSP target page that matches the Target pattern.");
+  console.log("  5. The companion runs automatically; click the extension action to rerun.");
+  console.log("  6. Watch the terminal, debug console, and BMKL companion overlay.");
+  console.log("  7. Re-run bmkl companion and reload the extension after source changes.");
+}
+
+function printDoctorResult(checks: DoctorCheck[]): void {
+  console.log("Doctor:");
+  for (const check of checks) {
+    console.log(`  ${check.status.padEnd(4)} ${check.name}: ${check.message}`);
+  }
+}
+
+function printContractValidationResult(
+  command: string,
+  file: string | undefined,
+  value: unknown,
+  json: boolean,
+): void {
+  if (json) {
+    console.log(JSON.stringify({ ok: true, command, file, value }, null, 2));
+    return;
+  }
+
+  const suffix = file ? ` ${formatDisplayPath(file)}` : "";
+  console.log(`pass contracts ${command}${suffix}`);
+}
+
+function createBuildSummary(
+  result: Awaited<ReturnType<BookmarkBuilder["build"]>>,
+) {
+  return {
+    name: result.config.name,
+    runtime: result.config.runtime,
+    channel: result.config.channel,
+    bookmarkletLength: result.bookmarkletUrl.length,
+    artifacts: result.artifacts.map((artifact) => ({
+      kind: artifact.kind,
+      fileName: artifact.fileName,
+      path: artifact.path,
+      relativePath: relative(result.config.root, artifact.path),
+      size: artifact.size,
+    })),
+    warnings: result.warnings,
+  };
+}
+
+function has(args: ParsedArgs, name: string): boolean {
+  return args.flags.has(name);
+}
+
+function flagBoolean(args: ParsedArgs, name: string): boolean {
+  return args.flags.get(name) === true;
+}
+
+function flagString(args: ParsedArgs, name: string): string | undefined {
+  const value = args.flags.get(name);
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function flagNumber(args: ParsedArgs, name: string): number | undefined {
+  const value = flagString(args, name);
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid number for --${name}: ${value}`);
+  }
+  return parsed;
+}
+
+function flagPort(args: ParsedArgs, name: string): number | undefined {
+  const port = flagNumber(args, name);
+  if (port === undefined) {
+    return undefined;
+  }
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid port for --${name}: ${port}. Choose 1-65535.`);
+  }
+  return port;
+}
+
+function validateChoice<const T extends readonly string[]>(
+  name: string,
+  value: string | undefined,
+  choices: T,
+): T[number] | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if ((choices as readonly string[]).includes(value)) {
+    return value as T[number];
+  }
+
+  throw new Error(`Invalid --${name}: ${value}. Choose ${choices.join(" | ")}.`);
+}
+
+function detectPackageManager(): string {
+  const userAgent = process.env.npm_config_user_agent ?? "";
+  if (userAgent.startsWith("bun")) {
+    return "bun";
+  }
+  if (userAgent.startsWith("pnpm")) {
+    return "pnpm";
+  }
+  if (userAgent.startsWith("yarn")) {
+    return "yarn";
+  }
+  return "pnpm";
+}
+
+function installCommand(packageManager: string): string {
+  if (packageManager === "yarn") {
+    return "yarn";
+  }
+  return `${packageManager} install`;
+}
+
+function runCommand(packageManager: string, script: string): string {
+  if (packageManager === "npm") {
+    return `npm run ${script}`;
+  }
+  return `${packageManager} ${script}`;
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) {
+    return `${size} B`;
+  }
+  return `${(size / 1024).toFixed(1)} kB`;
+}
+
+function isHelp(value: string): boolean {
+  return value === "--help" || value === "-h";
+}
+
+function isVersion(value: string): boolean {
+  return value === "--version" || value === "-v";
+}
+
+function getInvocationCwd(): string {
+  return process.env.BMKL_CWD || process.cwd();
+}
+
+function formatDisplayPath(path: string): string {
+  const cwd = getInvocationCwd();
+  return path.startsWith(`${cwd}/`) ? relative(cwd, path) : path;
+}
+
+async function runContractSmoke(): Promise<ContractSmokeResult> {
+  return withContractsModule((contracts) => contracts.runBmklContractSmoke());
+}
+
+async function withContractsModule<T>(
+  useContracts: (contracts: ContractsModule) => T,
+): Promise<T> {
+  try {
+    const contracts = await importContractsPackage();
+    return useContracts(contracts);
+  } catch (error) {
+    if (!isTypiaTransformMissing(error)) {
+      throw error;
+    }
+  }
+
+  try {
+    return useContracts(await importContractsDist());
+  } catch (error) {
+    throw new Error(
+      "Could not load compiled @bmkl/contracts after typia transform fallback.",
+      { cause: error },
+    );
+  }
+}
+
+async function importContractsPackage(): Promise<ContractsModule> {
+  return (await import("@bmkl/contracts")) as ContractsModule;
+}
+
+async function importContractsDist(): Promise<ContractsModule> {
+  const specifier = "../../contracts/dist/index.js";
+  return (await import(specifier)) as ContractsModule;
+}
+
+function isTypiaTransformMissing(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("no transform has been configured");
+}
+
+main(process.argv.slice(2)).catch((error) => {
+  console.error(error instanceof Error ? error.message : error);
+  if (process.env.BMKL_DEBUG && error instanceof Error && error.stack) {
+    console.error(error.stack);
+  }
+  process.exitCode = 1;
+});

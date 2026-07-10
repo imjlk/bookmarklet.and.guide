@@ -1,0 +1,34 @@
+{
+  "name": "@bmkl/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "bmkl": "./dist/index.js",
+    "bmk": "./dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node ../../scripts/build-package.mjs node --shebang && chmod +x dist/index.js && ttsc --project tsconfig.build.json --emitDeclarationOnly",
+    "clean": "rm -rf dist",
+    "dev": "tsx src/index.ts",
+    "typecheck": "ttsc --noEmit"
+  },
+  "dependencies": {
+    "@bmkl/contracts": "workspace:*",
+    "@bmkl/core": "workspace:*",
+    "@bmkl/templates": "workspace:*"
+  },
+  "devDependencies": {
+    "ttsc": "^0.18.0",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.2"
+  }
+}

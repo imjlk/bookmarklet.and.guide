@@ -1,0 +1,30 @@
+{
+  "name": "@bmkl/vite",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node ../../scripts/build-package.mjs node && ttsc --emitDeclarationOnly --rootDir src --outDir dist",
+    "clean": "rm -rf dist",
+    "typecheck": "ttsc --noEmit"
+  },
+  "dependencies": {
+    "@ttsc/unplugin": "^0.18.0"
+  },
+  "devDependencies": {
+    "ttsc": "^0.18.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.4"
+  },
+  "peerDependencies": {
+    "vite": "^8.1.4"
+  }
+}

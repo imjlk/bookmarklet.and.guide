@@ -1,0 +1,26 @@
+{
+  "name": "@bmkl/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "clean": "rm -rf dist",
+    "deploy": "wrangler pages deploy dist --project-name bookmarklet-and-guide",
+    "dev": "vite",
+    "pages:dev": "pnpm build && wrangler pages dev dist",
+    "preview": "vite preview",
+    "typecheck": "ttsc --noEmit"
+  },
+  "dependencies": {
+    "lucide-solid": "^1.23.0",
+    "solid-js": "^1.9.14"
+  },
+  "devDependencies": {
+    "ttsc": "^0.18.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.4",
+    "vite-plugin-solid": "^2.11.12",
+    "wrangler": "^4.107.1"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "format": {
+    "printWidth": 96,
+    "trailingComma": "all"
+  },
+  "rules": {
+    "no-var": "error",
+    "prefer-const": "error"
+  }
+}

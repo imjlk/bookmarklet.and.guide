@@ -1,0 +1,29 @@
+{
+  "name": "bookmarklet-and-guide",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "build": "pnpm --filter @bmkl/contracts build && pnpm --filter @bmkl/core build && pnpm --filter @bmkl/runtime build && pnpm --filter @bmkl/templates build && pnpm --filter @bmkl/vite build && pnpm --filter create-bmkl build && pnpm --filter @bmkl/cli build && pnpm --filter @bmkl/web build",
+    "clean": "pnpm -r clean",
+    "cli": "BMKL_CWD=$PWD pnpm --filter @bmkl/cli dev",
+    "e2e:debug": "pnpm build && node scripts/e2e-debug.mjs",
+    "format": "ttsc format",
+    "graph": "ttsc-graph",
+    "typecheck": "pnpm -r typecheck",
+    "web:dev": "pnpm --filter @bmkl/web dev",
+    "web:preview": "pnpm --filter @bmkl/web preview"
+  },
+  "devDependencies": {
+    "@ttsc/graph": "^0.18.0",
+    "@ttsc/lint": "^0.18.0",
+    "@ttsc/paths": "^0.18.0",
+    "@ttsc/strip": "^0.18.0",
+    "@types/node": "^26.1.1",
+    "esbuild": "^0.28.1",
+    "playwright": "^1.61.1",
+    "ttsc": "^0.18.0",
+    "typescript": "^7.0.2"
+  }
+}

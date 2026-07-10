@@ -1,0 +1,23 @@
+{
+  "name": "@bmkl/runtime",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node ../../scripts/build-package.mjs browser && ttsc --project tsconfig.build.json --emitDeclarationOnly",
+    "clean": "rm -rf dist",
+    "typecheck": "ttsc --noEmit"
+  },
+  "devDependencies": {
+    "ttsc": "^0.18.0",
+    "typescript": "^7.0.2"
+  }
+}

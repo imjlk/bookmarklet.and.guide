@@ -1,0 +1,26 @@
+import { defineBookmarkletConfig } from "@bmkl/core";
+
+export default defineBookmarkletConfig({
+  name: "__BMKL_PROJECT_NAME__",
+  globalName: "__BMKL_GLOBAL_NAME__",
+  entry: "src/inject.tsx",
+  outDir: "dist/bookmarklet",
+  runtime: "remote",
+  ui: "shadow",
+  channel: "latest",
+  remote: {
+    baseUrl: "https://example.com/bookmarklet/",
+    cacheBust: true,
+  },
+  ttsc: {
+    enabled: true,
+    project: "tsconfig.json",
+    typecheck: true,
+    plugins: false,
+  },
+  output: {
+    installHtml: true,
+    manifest: true,
+    report: true,
+  },
+});

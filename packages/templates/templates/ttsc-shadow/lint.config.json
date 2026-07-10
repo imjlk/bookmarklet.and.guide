@@ -1,0 +1,16 @@
+{
+  "format": {
+    "printWidth": 96,
+    "sortImports": {
+      "order": ["<BUILTIN_MODULES>", "", "<THIRD_PARTY_MODULES>", "", "^@app/", "^[./]"]
+    },
+    "trailingComma": "all"
+  },
+  "rules": {
+    "eqeqeq": "error",
+    "no-var": "error",
+    "prefer-const": "error",
+    "typescript/no-explicit-any": "error",
+    "typescript/no-floating-promises": "error"
+  }
+}
