@@ -6,11 +6,11 @@ export interface PageSnapshot {
 }
 
 export function readPageSnapshot(doc: Document = document): PageSnapshot {
-  const text = doc.body.innerText ?? "";
+  const text = doc.body?.innerText ?? "";
 
   return {
-    href: location.href,
-    selectedText: String(globalThis.getSelection?.() ?? "").trim(),
+    href: doc.URL,
+    selectedText: String(doc.getSelection?.() ?? "").trim(),
     title: doc.title,
     wordCount: text.trim().split(/\s+/).filter(Boolean).length,
   };

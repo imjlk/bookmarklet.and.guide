@@ -7,6 +7,12 @@ graph output, and optional compiler-plugin paths.
 Project creation follows the JavaScript package-manager convention through
 `create-bmkl`. The project CLI is `bmkl` with a short `bmk` alias.
 
+## Requirements
+
+BMKL development and generated projects require Node.js 22.12 or newer. The
+workspace pins pnpm 11.7 through `packageManager`; enable Corepack or install the
+matching pnpm release before running workspace commands.
+
 ```bash
 pnpm install
 pnpm build
@@ -61,10 +67,18 @@ The workspace uses `typescript@7`, `ttsc`, `typia@13`, `@ttsc/lint`,
 
 ```bash
 pnpm typecheck
+pnpm test
+pnpm test:templates
 pnpm format
 pnpm graph
 pnpm e2e:debug
 ```
+
+`pnpm test:templates` packages the local BMKL workspace, creates all six
+templates outside the monorepo, verifies that no `workspace:` dependency leaked
+into a scaffold, installs the packed packages, and runs each template's
+typecheck and production build. Set `BMKL_TEMPLATE_SMOKE_KEEP=1` to retain the
+temporary projects after a failure.
 
 `lint.config.json` is used instead of a JS/TS lint config so `@ttsc/lint` does
 not need to evaluate user code while scaffolds are still being generated.
@@ -96,6 +110,12 @@ declarations, and `ttsc-graph` is ready for code-graph inspection.
 TanStack Query stays in its own template so ordinary bookmarklets do not pay for
 server-state tooling unless they need API reads, refetching, cache lifetimes, or
 shared async state.
+
+Generated manifests pin `@bmkl/*` dependencies to the published
+`@bmkl/templates` version. BMKL packages therefore use synchronized versions;
+the template smoke test fails before scaffolding if workspace package versions
+drift. Scaffolds also pin pnpm 11.7.0 so Corepack selects the package-manager
+version used by the workspace and CI.
 
 ## Commands
 
@@ -233,5 +253,18 @@ pnpm --filter @bmkl/web pages:dev
 pnpm --filter @bmkl/web deploy
 ```
 
+The deploy command always rebuilds `apps/web/dist` before invoking Wrangler, so
+a direct upload cannot accidentally reuse a stale local bundle.
+
 Advanced mode requires `_worker.js` in the Pages output directory. A TypeScript
 worker must be compiled to that filename before deploy.
+
+## Package release safeguards
+
+Public packages declare their Node requirement and public scoped-package
+access. Their `prepack` lifecycle rebuilds ignored `dist`
+artifacts for the package and its workspace dependencies, while the template
+matrix installs local tarballs to exercise the
+same package boundaries consumers receive. Run `pnpm test`,
+`pnpm test:templates`, and `pnpm build` before publishing synchronized package
+versions.

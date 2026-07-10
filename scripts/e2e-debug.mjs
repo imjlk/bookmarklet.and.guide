@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { chromium } from "playwright";
+import { getPnpmCommand } from "./pnpm-command.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const appDir = join(root, "apps", "bmkl-debug-e2e-app");
@@ -66,12 +67,34 @@ const cases = [
 ];
 
 const childProcesses = new Set();
+const childCompletions = new WeakMap();
+const companionProfileDirs = new Set();
 let targetServer;
 let browser;
 let extensionContext;
 let debugBookmarkletUrl = "";
+let debugConsoleUrl = "";
 const devLogs = [];
+let shutdownSignal;
 
+const signalHandlers = new Map(
+  ["SIGINT", "SIGTERM"].map((signal) => [
+    signal,
+    () => {
+      shutdownSignal ??= signal;
+      for (const child of childProcesses) {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill(signal);
+        }
+      }
+    },
+  ]),
+);
+for (const [signal, handler] of signalHandlers) {
+  process.once(signal, handler);
+}
+
+let primaryError;
 try {
   await assertBuilt();
   await prepareApp();
@@ -94,26 +117,81 @@ try {
   results.push(await runCompanionCase());
 
   printResults(results);
-  devProcess.kill("SIGINT");
-} finally {
-  if (browser) {
-    await browser.close().catch(() => {});
+  await stopChild(devProcess);
+} catch (error) {
+  primaryError = error;
+}
+
+const cleanupErrors = await cleanup();
+for (const [signal, handler] of signalHandlers) {
+  process.removeListener(signal, handler);
+}
+if (shutdownSignal) {
+  for (const error of cleanupErrors) {
+    console.error(`Cleanup warning: ${toErrorMessage(error)}`);
   }
-  if (extensionContext) {
-    await extensionContext.close().catch(() => {});
+  process.exitCode = shutdownSignal === "SIGINT" ? 130 : 143;
+} else if (primaryError) {
+  for (const error of cleanupErrors) {
+    console.error(`Cleanup warning: ${toErrorMessage(error)}`);
   }
-  if (targetServer) {
-    await new Promise((resolve) => targetServer.close(resolve));
+  throw primaryError;
+} else if (cleanupErrors.length > 0) {
+  throw new AggregateError(cleanupErrors, "BMKL E2E cleanup failed.");
+}
+
+async function cleanup() {
+  const errors = [];
+  const attempt = async (operation) => {
+    try {
+      await operation();
+    } catch (error) {
+      errors.push(error);
+    }
+  };
+
+  await attempt(async () => {
+    if (browser) {
+      await browser.close();
+      browser = undefined;
+    }
+  });
+  await attempt(async () => {
+    if (extensionContext) {
+      await extensionContext.close();
+      extensionContext = undefined;
+    }
+  });
+  for (const profileDir of companionProfileDirs) {
+    await attempt(async () => {
+      await rm(profileDir, { recursive: true, force: true });
+      companionProfileDirs.delete(profileDir);
+    });
   }
-  for (const child of childProcesses) {
-    if (!child.killed) {
-      child.kill("SIGINT");
+  await attempt(async () => {
+    if (targetServer) {
+      await new Promise((resolve, reject) => {
+        targetServer.close((error) => (error ? reject(error) : resolve()));
+      });
+      targetServer = undefined;
+    }
+  });
+
+  const childResults = await Promise.allSettled(
+    Array.from(childProcesses, (child) => stopChild(child)),
+  );
+  for (const result of childResults) {
+    if (result.status === "rejected") {
+      errors.push(result.reason);
     }
   }
+
   if (!keepArtifacts) {
-    await rm(appDir, { recursive: true, force: true });
-    await exec("pnpm", ["install"]);
+    await attempt(() => rm(appDir, { recursive: true, force: true }));
+    await attempt(() => execPnpm(["install"]));
   }
+
+  return errors;
 }
 
 async function assertBuilt() {
@@ -143,7 +221,7 @@ async function prepareApp() {
 }
 
 async function pnpmInstall() {
-  await exec("pnpm", ["install"]);
+  await execPnpm(["install"]);
 }
 
 async function startTargetServer() {
@@ -219,13 +297,10 @@ function createTargetHtml(testCase) {
 }
 
 async function startDebugDevServer() {
-  const child = spawn(
-    "pnpm",
+  const child = spawnTracked(
+    process.execPath,
     [
-      "--filter",
-      appName,
-      "exec",
-      "bmkl",
+      join(root, "packages", "cli", "dist", "index.js"),
       "dev",
       "--debug",
       "--target",
@@ -233,16 +308,23 @@ async function startDebugDevServer() {
       "--port",
       String(devPort),
     ],
-    { cwd: root, stdio: ["ignore", "pipe", "pipe"] },
+    {
+      cwd: appDir,
+      env: { ...process.env, BMKL_CWD: appDir },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
   );
-  childProcesses.add(child);
 
   let output = "";
+  let stdoutBuffer = "";
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
     output += chunk;
-    for (const line of chunk.split(/\r?\n/)) {
+    stdoutBuffer += chunk;
+    const lines = stdoutBuffer.split(/\r?\n/);
+    stdoutBuffer = lines.pop() ?? "";
+    for (const line of lines) {
       if (line.includes("[bmkl debug]")) {
         devLogs.push(line.trim());
       }
@@ -252,21 +334,43 @@ async function startDebugDevServer() {
     output += chunk;
   });
 
-  await waitFor(() => {
-    const match = output.match(/Debug bookmarklet:\s*\n(.*)\n\s*\nTarget-site debug flow:/s);
-    if (!match) {
-      return false;
-    }
-    debugBookmarkletUrl = match[1].trim();
-    return debugBookmarkletUrl.startsWith("javascript:");
-  }, `bmkl dev did not print a debug bookmarklet.\n${output}`);
+  await Promise.race([
+    waitFor(() => {
+      const match = output.match(
+        /Debug bookmarklet:\s*\n(.*)\n\s*\nTarget-site debug flow:/s,
+      );
+      if (!match) {
+        return false;
+      }
+      const debugConsoleMatch = output.match(/Debug console:\s*(\S+)/);
+      if (!debugConsoleMatch) {
+        return false;
+      }
+      debugBookmarkletUrl = match[1].trim();
+      debugConsoleUrl = debugConsoleMatch[1].trim();
+      return (
+        debugBookmarkletUrl.startsWith("javascript:") &&
+        debugConsoleUrl.startsWith(devOrigin)
+      );
+    }, `bmkl dev did not print a debug bookmarklet.\n${output}`),
+    childCompletion(child).then(
+      ({ code, signal }) => {
+        throw new Error(
+          `bmkl dev exited before startup (${signal ?? code}).\n${output}`,
+        );
+      },
+      (error) => {
+        throw new Error("Could not spawn bmkl dev.", { cause: error });
+      },
+    ),
+  ]);
 
-  await waitForHttp(`${devOrigin}/__bmkl/debug`);
+  await waitForHttp(debugConsoleUrl);
   return child;
 }
 
 async function buildCompanionExtension() {
-  await exec("pnpm", [
+  await execPnpm([
     "--filter",
     appName,
     "exec",
@@ -282,6 +386,7 @@ async function buildCompanionExtension() {
 }
 
 async function runCase(context, testCase) {
+  throwIfShuttingDown();
   const startLogIndex = devLogs.length;
   const page = await context.newPage();
   const browserMessages = [];
@@ -300,6 +405,12 @@ async function runCase(context, testCase) {
   );
   await page.click("#run-bookmarklet");
   await waitForOverlayEvents(page, testCase.expectedOverlay);
+  throwIfShuttingDown();
+  await waitForTerminalEvents(
+    startLogIndex,
+    testCase.expectedTerminal ?? [],
+    testCase.name,
+  );
 
   const overlayText = await readOverlayText(page);
   const caseLogs = devLogs.slice(startLogIndex);
@@ -344,9 +455,13 @@ async function runCase(context, testCase) {
 }
 
 async function runCompanionCase() {
+  throwIfShuttingDown();
   const startLogIndex = devLogs.length;
   const userDataDir = await mkdtemp(join(tmpdir(), "bmkl-companion-profile-"));
+  companionProfileDirs.add(userDataDir);
   const browserMessages = [];
+  let result;
+  let primaryError;
 
   try {
     extensionContext = await chromium.launchPersistentContext(userDataDir, {
@@ -376,10 +491,15 @@ async function runCompanionCase() {
       "app-mounted",
       "app-run",
     ]);
+    await waitForTerminalEvents(
+      startLogIndex,
+      ["companion-started", "app-mounted", "app-run"],
+      "companion-script-src-self",
+    );
 
     const overlayText = await readOverlayText(page);
     const caseLogs = devLogs.slice(startLogIndex);
-    const result = {
+    result = {
       browserMessages,
       failures: [],
       logs: caseLogs,
@@ -405,14 +525,40 @@ async function runCompanionCase() {
       throw new Error(formatFailure(result));
     }
 
-    return result;
-  } finally {
-    if (extensionContext) {
-      await extensionContext.close().catch(() => {});
-      extensionContext = undefined;
-    }
-    await rm(userDataDir, { recursive: true, force: true });
+  } catch (error) {
+    primaryError = error;
   }
+
+  const cleanupErrors = [];
+  if (extensionContext) {
+    const context = extensionContext;
+    try {
+      await context.close();
+      if (extensionContext === context) {
+        extensionContext = undefined;
+      }
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+  }
+  try {
+    await rm(userDataDir, { recursive: true, force: true });
+    companionProfileDirs.delete(userDataDir);
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+
+  if (primaryError) {
+    for (const error of cleanupErrors) {
+      console.error(`Companion cleanup warning: ${toErrorMessage(error)}`);
+    }
+    throw primaryError;
+  }
+  if (cleanupErrors.length > 0) {
+    throw new AggregateError(cleanupErrors, "Companion E2E cleanup failed.");
+  }
+
+  return result;
 }
 
 async function waitForOverlayEvents(page, eventNames) {
@@ -424,6 +570,22 @@ async function waitForOverlayEvents(page, eventNames) {
     },
     eventNames,
     { timeout: 10000 },
+  );
+}
+
+async function waitForTerminalEvents(startIndex, eventNames, caseName) {
+  if (eventNames.length === 0) {
+    return;
+  }
+
+  await waitFor(
+    () => {
+      const logs = devLogs.slice(startIndex);
+      return eventNames.every((eventName) =>
+        logs.some((line) => line.includes(`[bmkl debug] ${eventName}`)),
+      );
+    },
+    `Timed out waiting for terminal debug events in ${caseName}: ${eventNames.join(", ")}`,
   );
 }
 
@@ -470,8 +632,10 @@ function formatFailure(result) {
 }
 
 async function exec(command, args) {
-  const child = spawn(command, args, { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
-  childProcesses.add(child);
+  const child = spawnTracked(command, args, {
+    cwd: root,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   let output = "";
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
@@ -481,10 +645,78 @@ async function exec(command, args) {
   child.stderr.on("data", (chunk) => {
     output += chunk;
   });
-  const [code] = await once(child, "exit");
-  childProcesses.delete(child);
-  if (code !== 0) {
-    throw new Error(`${command} ${args.join(" ")} failed with ${code}\n${output}`);
+  let result;
+  try {
+    result = await childCompletion(child);
+  } catch (error) {
+    throw new Error(`Could not spawn ${command}.`, { cause: error });
+  }
+  if (result.code !== 0) {
+    throw new Error(
+      `${command} ${args.join(" ")} failed with ${result.signal ?? result.code}\n${output}`,
+    );
+  }
+}
+
+async function execPnpm(args) {
+  const invocation = getPnpmCommand(args);
+  await exec(invocation.command, invocation.args);
+}
+
+function spawnTracked(command, args, options) {
+  const child = spawn(command, args, options);
+  childProcesses.add(child);
+
+  const completion = new Promise((resolve, reject) => {
+    child.once("error", (error) => {
+      childProcesses.delete(child);
+      reject(error);
+    });
+    child.once("exit", (code, signal) => {
+      childProcesses.delete(child);
+      resolve({ code, signal });
+    });
+  });
+  void completion.catch(() => {});
+  childCompletions.set(child, completion);
+  return child;
+}
+
+function childCompletion(child) {
+  const completion = childCompletions.get(child);
+  if (!completion) {
+    throw new Error("Missing child process completion tracker.");
+  }
+  return completion;
+}
+
+async function stopChild(child) {
+  const completion = childCompletion(child);
+  if (child.exitCode !== null || child.signalCode !== null) {
+    await completion;
+    return;
+  }
+
+  child.kill("SIGINT");
+  if (await settlesWithin(completion, 5000)) {
+    return;
+  }
+
+  child.kill("SIGKILL");
+  await completion;
+}
+
+async function settlesWithin(promise, timeout) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise.then(() => true),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(false), timeout);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -492,22 +724,35 @@ async function waitForHttp(url) {
   await waitFor(async () => {
     try {
       const response = await fetch(url);
-      return response.ok;
+      const ok = response.ok;
+      await response.body?.cancel().catch(() => {});
+      return ok;
     } catch {
       return false;
     }
   }, `Timed out waiting for ${url}`);
 }
 
+function toErrorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function waitFor(check, failureMessage, timeout = 15000) {
   const started = Date.now();
   while (Date.now() - started < timeout) {
+    throwIfShuttingDown();
     if (await check()) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(failureMessage);
+}
+
+function throwIfShuttingDown() {
+  if (shutdownSignal) {
+    throw new Error(`BMKL E2E interrupted by ${shutdownSignal}.`);
+  }
 }
 
 function escapeHtml(value) {

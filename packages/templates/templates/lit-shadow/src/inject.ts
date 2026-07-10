@@ -51,6 +51,7 @@ export function run(): void {
   });
 
   const tagName = "__BMKL_PROJECT_ID__"
+    .toLowerCase()
     .replace(/_+/g, "-")
     .replace(/^-+|-+$/g, "")
     .concat("-panel");

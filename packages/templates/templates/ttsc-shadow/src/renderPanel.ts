@@ -9,8 +9,9 @@ export function renderPanel(root: HTMLElement, destroy: () => void): void {
   devAssert.present(root, "BMKL root");
 
   const snapshot = readPageSnapshot();
-  console.debug("[bmkl] page snapshot", snapshot);
-  debugger;
+  if (import.meta.env.DEV) {
+    console.debug("[bmkl] page snapshot", snapshot);
+  }
 
   root.innerHTML = panelMarkup(snapshot);
   root

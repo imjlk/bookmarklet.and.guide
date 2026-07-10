@@ -1,4 +1,5 @@
 import {
+  captureBookmarkletDebugError,
   installBookmarkletStyles,
   logBookmarkletDebugEvent,
   mountBookmarkletApp,
@@ -8,17 +9,43 @@ import { App } from "./App.jsx";
 import styles from "./style.css?inline";
 
 let dispose: (() => void) | undefined;
+let destroyHost: (() => void) | undefined;
 
 export function run(): void {
-  dispose?.();
-  const ctx = mountBookmarkletApp({
-    id: "__BMKL_PROJECT_ID__",
-    mode: "shadow",
-  });
-  installBookmarkletStyles(ctx, styles);
+  cleanup();
+  try {
+    const ctx = mountBookmarkletApp({
+      id: "__BMKL_PROJECT_ID__",
+      mode: "shadow",
+    });
+    destroyHost = ctx.destroy;
+    installBookmarkletStyles(ctx, styles);
 
-  dispose = render(() => <App destroy={ctx.destroy} />, ctx.root);
-  logBookmarkletDebugEvent("app-mounted", "__BMKL_PROJECT_NAME__ mounted");
+    dispose = render(() => <App destroy={cleanup} />, ctx.root);
+    logBookmarkletDebugEvent("app-mounted", "__BMKL_PROJECT_NAME__ mounted");
+  } catch (error) {
+    cleanup();
+    captureBookmarkletDebugError(error, "solid-mount");
+    throw error;
+  }
+}
+
+function cleanup(): void {
+  const stop = dispose;
+  dispose = undefined;
+  try {
+    stop?.();
+  } catch (error) {
+    captureBookmarkletDebugError(error, "solid-cleanup");
+  }
+
+  const destroy = destroyHost;
+  destroyHost = undefined;
+  try {
+    destroy?.();
+  } catch (error) {
+    captureBookmarkletDebugError(error, "solid-host-cleanup");
+  }
 }
 
 Object.assign(globalThis, {
