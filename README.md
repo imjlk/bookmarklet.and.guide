@@ -78,7 +78,9 @@ pnpm e2e:debug
 templates outside the monorepo, verifies that no `workspace:` dependency leaked
 into a scaffold, installs the packed packages, and runs each template's
 typecheck and production build. Set `BMKL_TEMPLATE_SMOKE_KEEP=1` to retain the
-temporary projects after a failure.
+temporary projects after a failure. Individual subprocesses time out after ten
+minutes by default; override that limit with
+`BMKL_TEMPLATE_SMOKE_STEP_TIMEOUT_MS` when diagnosing slower environments.
 
 `lint.config.json` is used instead of a JS/TS lint config so `@ttsc/lint` does
 not need to evaluate user code while scaffolds are still being generated.

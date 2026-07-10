@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.7.0",
+  "packageManager": "__BMKL_PACKAGE_MANAGER__",
   "engines": {
     "node": ">=22.12.0"
   },

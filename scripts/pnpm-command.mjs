@@ -1,17 +1,22 @@
-export function getPnpmCommand(args) {
-  const userAgent = process.env.npm_config_user_agent ?? "";
-  const pnpmExecPath = process.env.npm_execpath;
+export function getPnpmCommand(args, options = {}) {
+  const env = options.env ?? process.env;
+  const execPath = options.execPath ?? process.execPath;
+  const platform = options.platform ?? process.platform;
+  const userAgent = env.npm_config_user_agent ?? "";
+  const pnpmExecPath = env.npm_execpath;
 
   if (userAgent.startsWith("pnpm/") && pnpmExecPath) {
     return {
       args: [pnpmExecPath, ...args],
-      command: process.execPath,
+      command: execPath,
     };
   }
 
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     throw new Error(
-      "Run this script through pnpm so its Windows launcher can be resolved safely.",
+      userAgent.startsWith("pnpm/")
+        ? "pnpm is active, but npm_execpath is unavailable on Windows."
+        : "Run this script through pnpm so its Windows launcher can be resolved safely.",
     );
   }
 

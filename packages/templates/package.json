@@ -4,6 +4,7 @@
   "description": "Official project templates and scaffold utilities for BMKL.",
   "keywords": ["bookmarklet", "scaffold", "templates", "vite"],
   "type": "module",
+  "packageManager": "pnpm@11.7.0",
   "engines": {
     "node": ">=22.12.0"
   },

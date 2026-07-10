@@ -14,11 +14,17 @@ import { fileURLToPath } from "node:url";
 import { getPnpmCommand } from "./pnpm-command.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
+const expectedPackageManager = await readExpectedPackageManager();
 const keepArtifacts = process.env.BMKL_TEMPLATE_SMOKE_KEEP === "1";
 const activeChildren = new Set();
 let shutdownSignal;
+let poolFailure;
 const concurrency = parseConcurrency(
   process.env.BMKL_TEMPLATE_SMOKE_CONCURRENCY ?? "2",
+);
+const stepTimeoutMs = parsePositiveInteger(
+  process.env.BMKL_TEMPLATE_SMOKE_STEP_TIMEOUT_MS ?? "600000",
+  "BMKL_TEMPLATE_SMOKE_STEP_TIMEOUT_MS",
 );
 const templateNames = [
   "lit-shadow",
@@ -84,6 +90,14 @@ async function readPackageVersions() {
     const manifest = await readJson(join(root, directory, "package.json"));
     if (manifest.name !== name || typeof manifest.version !== "string") {
       throw new Error(`Invalid package metadata for ${name} in ${directory}`);
+    }
+    if (
+      name === "@bmkl/templates" &&
+      manifest.packageManager !== expectedPackageManager
+    ) {
+      throw new Error(
+        `@bmkl/templates must pin ${expectedPackageManager} to scaffold projects.`,
+      );
     }
     versions.set(name, manifest.version);
   }
@@ -194,9 +208,9 @@ function assertPublishedDependencies(manifest, bmklVersion, templateName) {
   if (bmklDependencyCount === 0) {
     throw new Error(`${templateName} does not declare any BMKL packages.`);
   }
-  if (manifest.packageManager !== "pnpm@11.7.0") {
+  if (manifest.packageManager !== expectedPackageManager) {
     throw new Error(
-      `${templateName} pins ${manifest.packageManager ?? "no package manager"}; expected pnpm@11.7.0.`,
+      `${templateName} pins ${manifest.packageManager ?? "no package manager"}; expected ${expectedPackageManager}.`,
     );
   }
 }
@@ -256,6 +270,17 @@ async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
 }
 
+async function readExpectedPackageManager() {
+  const manifest = await readJson(join(root, "package.json"));
+  if (
+    typeof manifest.packageManager !== "string" ||
+    !/^pnpm@\d+\.\d+\.\d+$/.test(manifest.packageManager)
+  ) {
+    throw new Error("Root package.json must pin an exact pnpm packageManager.");
+  }
+  return manifest.packageManager;
+}
+
 async function runPnpm(args, options) {
   const invocation = getPnpmCommand(args);
   await run(invocation.command, invocation.args, options);
@@ -271,11 +296,31 @@ async function run(command, args, { cwd, label }) {
   });
   activeChildren.add(child);
   let code;
+  let forceTimer;
   let signal;
+  let timedOut = false;
+  const timeoutTimer = setTimeout(() => {
+    timedOut = true;
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGTERM");
+      forceTimer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      }, 5_000);
+    }
+  }, stepTimeoutMs);
   try {
     [code, signal] = await once(child, "exit");
+  } catch (error) {
+    throw new Error(`${label} could not start.`, { cause: error });
   } finally {
+    clearTimeout(timeoutTimer);
+    clearTimeout(forceTimer);
     activeChildren.delete(child);
+  }
+  if (timedOut) {
+    throw new Error(`${label} timed out after ${stepTimeoutMs}ms.`);
   }
   if (signal || code !== 0) {
     throw new Error(
@@ -287,6 +332,11 @@ async function run(command, args, { cwd, label }) {
 function throwIfShuttingDown() {
   if (shutdownSignal) {
     throw new Error(`Template smoke interrupted by ${shutdownSignal}.`);
+  }
+  if (poolFailure) {
+    throw new Error("Template smoke canceled after another template failed.", {
+      cause: poolFailure,
+    });
   }
 }
 
@@ -302,27 +352,50 @@ async function runPool(items, limit, task) {
         try {
           await task(item);
         } catch (error) {
+          poolFailure ??= error;
           failures.push(error);
         }
       }
     },
   );
   await Promise.all(workers);
-  if (failures.length > 0) {
+  if (failures.length === 1) {
     throw failures[0];
+  }
+  if (failures.length > 1) {
+    throw new AggregateError(
+      failures,
+      `${failures.length} template smoke tasks failed.`,
+    );
   }
 }
 
 function parseConcurrency(value) {
+  return parsePositiveInteger(value, "BMKL_TEMPLATE_SMOKE_CONCURRENCY");
+}
+
+function parsePositiveInteger(value, name) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new Error(`Invalid BMKL_TEMPLATE_SMOKE_CONCURRENCY: ${value}`);
+    throw new Error(`Invalid ${name}: ${value}`);
   }
   return parsed;
 }
 
 function normalizePath(path) {
   return path.replaceAll("\\", "/");
+}
+
+function formatError(error) {
+  if (error instanceof AggregateError) {
+    return [
+      error.message,
+      ...error.errors.map((item, index) =>
+        `${index + 1}. ${item instanceof Error ? item.message : String(item)}`,
+      ),
+    ].join("\n");
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 const signalHandlers = new Map(
@@ -356,6 +429,6 @@ try {
 if (shutdownSignal) {
   process.exitCode = shutdownSignal === "SIGINT" ? 130 : 143;
 } else if (mainError) {
-  console.error(mainError instanceof Error ? mainError.message : mainError);
+  console.error(formatError(mainError));
   process.exitCode = 1;
 }

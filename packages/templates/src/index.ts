@@ -49,6 +49,7 @@ export interface CreateProjectResult {
 interface TemplateReplacements {
   bmklVersion: string;
   globalName: string;
+  packageManager: string;
   projectId: string;
   projectName: string;
 }
@@ -177,13 +178,15 @@ export async function createProject(
   const projectName = toPackageName(basename(destination));
   const globalName = toGlobalName(basename(destination));
   const projectId = `__bmkl_${projectName.replace(/[^a-z0-9]+/g, "_")}__`;
-  const bmklVersion = await getBmklVersion();
+  const { packageManager, version: bmklVersion } =
+    await getBmklPackageMetadata();
 
   await assertWritableDirectory(destination, Boolean(options.force));
   await mkdir(destination, { recursive: true });
   await copyTemplateDirectory(templateDir, destination, {
     bmklVersion,
     globalName,
+    packageManager,
     projectId,
     projectName,
   });
@@ -315,26 +318,42 @@ function applyReplacements(
 ): string {
   return text
     .replaceAll("__BMKL_VERSION__", replacements.bmklVersion)
+    .replaceAll("__BMKL_PACKAGE_MANAGER__", replacements.packageManager)
     .replaceAll("__BMKL_PROJECT_NAME__", replacements.projectName)
     .replaceAll("__BMKL_GLOBAL_NAME__", replacements.globalName)
     .replaceAll("__BMKL_PROJECT_ID__", replacements.projectId);
 }
 
-async function getBmklVersion(): Promise<string> {
+async function getBmklPackageMetadata(): Promise<{
+  packageManager: string;
+  version: string;
+}> {
   const packageJsonPath = join(
     dirname(fileURLToPath(import.meta.url)),
     "..",
     "package.json",
   );
   const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8")) as {
+    packageManager?: unknown;
     version?: unknown;
   };
 
   if (typeof packageJson.version !== "string" || packageJson.version.length === 0) {
     throw new Error(`Invalid @bmkl/templates version in ${packageJsonPath}`);
   }
+  if (
+    typeof packageJson.packageManager !== "string" ||
+    !/^pnpm@\d+\.\d+\.\d+$/.test(packageJson.packageManager)
+  ) {
+    throw new Error(
+      `Invalid @bmkl/templates packageManager in ${packageJsonPath}`,
+    );
+  }
 
-  return packageJson.version;
+  return {
+    packageManager: packageJson.packageManager,
+    version: packageJson.version,
+  };
 }
 
 function toPackageName(input: string): string {
