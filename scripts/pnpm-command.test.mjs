@@ -32,6 +32,19 @@ test("getPnpmCommand falls back to PATH on non-Windows platforms", () => {
   );
 });
 
+test("getPnpmCommand uses PATH for pnpm without an execpath off Windows", () => {
+  assert.deepEqual(
+    getPnpmCommand(["install"], {
+      env: { npm_config_user_agent: "pnpm/11.7.0 npm/? node/v22.12.0" },
+      platform: "linux",
+    }),
+    {
+      args: ["install"],
+      command: "pnpm",
+    },
+  );
+});
+
 test("getPnpmCommand explains a missing pnpm entrypoint on Windows", () => {
   assert.throws(
     () =>

@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { getPnpmCommand } from "./pnpm-command.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const expectedPackageManager = await readExpectedPackageManager();
+let expectedPackageManager;
 const keepArtifacts = process.env.BMKL_TEMPLATE_SMOKE_KEEP === "1";
 const activeChildren = new Set();
 let shutdownSignal;
@@ -45,6 +45,8 @@ const packageEntries = [
 ];
 
 async function main() {
+  expectedPackageManager = await readExpectedPackageManager();
+  throwIfShuttingDown();
   const tempRoot = await mkdtemp(join(tmpdir(), "bmkl-template-smoke-"));
   const packsDir = join(tempRoot, "packs");
   const projectsDir = join(tempRoot, "projects");
@@ -300,8 +302,8 @@ async function run(command, args, { cwd, label }) {
   let signal;
   let timedOut = false;
   const timeoutTimer = setTimeout(() => {
-    timedOut = true;
     if (child.exitCode === null && child.signalCode === null) {
+      timedOut = true;
       child.kill("SIGTERM");
       forceTimer = setTimeout(() => {
         if (child.exitCode === null && child.signalCode === null) {
@@ -313,7 +315,7 @@ async function run(command, args, { cwd, label }) {
   try {
     [code, signal] = await once(child, "exit");
   } catch (error) {
-    throw new Error(`${label} could not start.`, { cause: error });
+    throw new Error(`${label} encountered a process error.`, { cause: error });
   } finally {
     clearTimeout(timeoutTimer);
     clearTimeout(forceTimer);
@@ -341,32 +343,37 @@ function throwIfShuttingDown() {
 }
 
 async function runPool(items, limit, task) {
+  poolFailure = undefined;
   let nextIndex = 0;
   const failures = [];
-  const workers = Array.from(
-    { length: Math.min(limit, items.length) },
-    async () => {
-      while (nextIndex < items.length && failures.length === 0) {
-        const item = items[nextIndex];
-        nextIndex += 1;
-        try {
-          await task(item);
-        } catch (error) {
-          poolFailure ??= error;
-          failures.push(error);
+  try {
+    const workers = Array.from(
+      { length: Math.min(limit, items.length) },
+      async () => {
+        while (nextIndex < items.length && failures.length === 0) {
+          const item = items[nextIndex];
+          nextIndex += 1;
+          try {
+            await task(item);
+          } catch (error) {
+            poolFailure ??= error;
+            failures.push(error);
+          }
         }
-      }
-    },
-  );
-  await Promise.all(workers);
-  if (failures.length === 1) {
-    throw failures[0];
-  }
-  if (failures.length > 1) {
-    throw new AggregateError(
-      failures,
-      `${failures.length} template smoke tasks failed.`,
+      },
     );
+    await Promise.all(workers);
+    if (failures.length === 1) {
+      throw failures[0];
+    }
+    if (failures.length > 1) {
+      throw new AggregateError(
+        failures,
+        `${failures.length} template smoke tasks failed.`,
+      );
+    }
+  } finally {
+    poolFailure = undefined;
   }
 }
 
@@ -388,9 +395,10 @@ function normalizePath(path) {
 
 function formatError(error) {
   if (error instanceof AggregateError) {
+    const errors = Array.isArray(error.errors) ? error.errors : [];
     return [
       error.message,
-      ...error.errors.map((item, index) =>
+      ...errors.map((item, index) =>
         `${index + 1}. ${item instanceof Error ? item.message : String(item)}`,
       ),
     ].join("\n");
