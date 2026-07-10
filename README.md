@@ -4,6 +4,13 @@ BMKL is a Vite-first toolkit for building bookmarklets as real in-page apps:
 Vite handles preview and IIFE bundling, while `ttsc` supplies type checks,
 graph output, and optional compiler-plugin paths.
 
+Project site: [bookmarklet.and.guide](https://bookmarklet.and.guide)
+
+> **Release status:** BMKL is currently a source preview. `create-bmkl` and the
+> `@bmkl/*` packages have not been published to npm, so use the workspace
+> commands below. Package-manager create commands are documented as the planned
+> post-release interface, not as commands that work today.
+
 Project creation follows the JavaScript package-manager convention through
 `create-bmkl`. The project CLI is `bmkl` with a short `bmk` alias.
 
@@ -15,14 +22,17 @@ matching pnpm release before running workspace commands.
 
 ```bash
 pnpm install
-pnpm build
-pnpm --filter create-bmkl dev -- "$PWD/my-agent" --template lit-shadow
+pnpm build:packages
+pnpm cli -- create "$PWD/my-agent" --local --template lit-shadow
 cd my-agent
 pnpm install
 pnpm build
 ```
 
-After publishing, the same flow is intended to read as:
+`--local` rewrites the generated `@bmkl/*` dependencies and pnpm overrides to
+the packages in this checkout. Omit it after the packages are published.
+
+After the first npm release, the same flow is intended to read as:
 
 ```bash
 npm create bmkl@latest my-agent -- --template lit-shadow
@@ -71,6 +81,7 @@ pnpm test
 pnpm test:templates
 pnpm format
 pnpm graph
+pnpm graph:mcp
 pnpm e2e:debug
 ```
 
@@ -82,12 +93,12 @@ temporary projects after a failure. Individual subprocesses time out after ten
 minutes by default; override that limit with
 `BMKL_TEMPLATE_SMOKE_STEP_TIMEOUT_MS` when diagnosing slower environments.
 
-`lint.config.json` is used instead of a JS/TS lint config so `@ttsc/lint` does
-not need to evaluate user code while scaffolds are still being generated.
-Templates include `ttsc --noEmit`, `ttsc-graph`, and `@ttsc/*` config so
-projects are ready for compiler-aware checks. The Vite integration can opt into
-`@ttsc/unplugin`; Solid-based templates disable that transform path for JSX
-build compatibility while keeping ttsc checks and graph scripts.
+Templates include `ttsc --noEmit`, an interactive graph viewer, and a separate
+MCP graph-server script. The dedicated `ttsc-shadow` template additionally
+demonstrates lint, strip, and path transforms; ordinary framework templates do
+not install those unused compiler plugins. The Vite integration can opt into
+`@ttsc/unplugin`, while Solid-based templates leave that transform path disabled
+for JSX build compatibility.
 `@bmkl/contracts` uses typia as the generated contract layer for external JSON
 payloads, including debug events, remote manifests, action envelopes, and iframe
 bridge messages. `bmkl doctor` runs a contract smoke check so the typia
@@ -107,11 +118,12 @@ vanilla-shadow       Minimal TypeScript template with no UI framework
 `ttsc-shadow` is the template for trying the compiler toolchain seriously:
 `@ttsc/lint` runs in the type-check pass, `@ttsc/strip` removes debug-only calls
 from bundled output, `@ttsc/paths` rewrites alias imports for emitted
-declarations, and `ttsc-graph` is ready for code-graph inspection.
+declarations. Run `pnpm graph` for the interactive viewer or `pnpm graph:mcp`
+for an MCP-capable coding agent.
 
 TanStack Query stays in its own template so ordinary bookmarklets do not pay for
-server-state tooling unless they need API reads, refetching, cache lifetimes, or
-shared async state.
+async cache tooling unless they need refetched page snapshots, API reads, cache
+lifetimes, or shared async state.
 
 Generated manifests pin `@bmkl/*` dependencies to the published
 `@bmkl/templates` version. BMKL packages therefore use synchronized versions;
@@ -122,7 +134,7 @@ version used by the workspace and CI.
 ## Commands
 
 ```bash
-pnpm cli -- create my-agent --template lit-shadow
+pnpm cli -- create my-agent --local --template lit-shadow
 pnpm cli -- templates --json
 pnpm cli -- build --config bookmarklet.config.ts
 pnpm cli -- build --print-bookmarklet
@@ -149,10 +161,10 @@ accepted from every origin by default.
 ## Target-site debugging
 
 Development can run against the real target site, not only the local Vite
-preview page.
+preview page. Run these commands from a generated project root:
 
 ```bash
-bmkl dev --debug --target https://example.com
+pnpm exec bmkl dev --debug --target https://example.com
 ```
 
 The command prints both a normal dev bookmarklet and a debug bookmarklet. Use
@@ -166,7 +178,7 @@ server.
 Exact test flow:
 
 ```text
-1. Run bmkl dev --debug --target <site>.
+1. Run pnpm exec bmkl dev --debug --target <site>.
 2. Open the real target site in your browser.
 3. Create a bookmark named BMKL debug with the printed install-once debug bookmarklet URL.
 4. Click BMKL debug while the target site tab is active.
@@ -191,23 +203,23 @@ bookmarklet can report as `module-load-error`. A stricter site can also block
 `javascript:` bookmark execution or inline bootstrap code altogether; in that
 case the bookmarklet cannot install the overlay at all.
 
-`bmkl companion` builds an unpacked Chrome Manifest V3 extension that bundles
+`pnpm exec bmkl companion` builds an unpacked Chrome Manifest V3 extension that bundles
 the current BMKL entry as a content script. The local debug collector still
-runs through `bmkl dev --debug`, but the app code is delivered by the extension
+runs through `pnpm exec bmkl dev --debug`, but the app code is delivered by the extension
 instead of by a page-injected localhost script.
 
 Exact companion test flow:
 
 ```text
-1. Run bmkl dev --debug --target <site> --port 5173.
-2. In another terminal, run bmkl companion --target <site> --port 5173.
+1. Run pnpm exec bmkl dev --debug --target <site> --port 5173.
+2. In another terminal, run pnpm exec bmkl companion --target <site> --port 5173.
 3. Open chrome://extensions in Chromium or Chrome and enable Developer mode.
 4. Load dist/bookmarklet/companion-extension as an unpacked extension.
 5. Open or reload the strict CSP target page.
 6. The companion content script runs automatically when the page matches the target pattern.
 7. Click the extension action to rerun the companion on the active tab.
 8. Watch terminal events, the localhost debug console, and the BMKL companion overlay.
-9. After source changes, rerun bmkl companion and reload the unpacked extension.
+9. After source changes, rerun pnpm exec bmkl companion and reload the unpacked extension.
 ```
 
 This does not turn every production page into a safe bookmarklet target. It is
@@ -269,4 +281,11 @@ artifacts for the package and its workspace dependencies, while the template
 matrix installs local tarballs to exercise the
 same package boundaries consumers receive. Run `pnpm test`,
 `pnpm test:templates`, and `pnpm build` before publishing synchronized package
-versions.
+versions. CI also installs the packed CLI and creator into a clean consumer
+directory and executes all three public bins (`bmkl`, `bmk`, and
+`create-bmkl`).
+
+Publishing is intentionally not automated yet. A maintainer must first choose
+and add the project license, configure the canonical Git remote so repository
+and issue URLs are known, confirm npm ownership for every package name, and
+complete the checklist in [docs/releasing.md](docs/releasing.md).

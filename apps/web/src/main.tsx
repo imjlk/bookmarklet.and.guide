@@ -29,7 +29,7 @@ interface ProjectMeta {
 }
 
 const defaultCreateCommand =
-  "npm create bmkl@latest my-agent -- --template lit-shadow";
+  "pnpm install && pnpm build:packages && pnpm cli -- create my-agent --local --template lit-shadow";
 
 const cloudflarePagesGuideUrl =
   "https://developers.cloudflare.com/pages/get-started/direct-upload/";
@@ -55,24 +55,24 @@ const workflow = [
     icon: Terminal,
     title: "Create",
     command: defaultCreateCommand,
-    body: "Start from a Vite template for Lit, ttsc plugins, Solid, TanStack Query, React, or dependency-light TypeScript.",
+    body: "From the BMKL source checkout root, install and build the local packages, then create a project linked to this checkout.",
   },
   {
     icon: Play,
     title: "Develop",
-    command: "pnpm dev",
-    body: "Use the preview page and a dev bookmarklet while Vite serves the injected module.",
+    command: "cd my-agent && pnpm install && pnpm dev",
+    body: "Inside the generated project, install dependencies and use its preview page plus dev bookmarklet.",
   },
   {
     icon: PackageCheck,
     title: "Ship",
-    command: "bmkl build && bmkl inspect",
-    body: "Generate remote, inline, install page, manifest, and report artifacts.",
+    command: "pnpm build && pnpm inspect",
+    body: "Inside the generated project, build and inspect remote, inline, install-page, manifest, and report artifacts.",
   },
 ];
 
 const packages = [
-  ["create-bmkl", "npm/pnpm/bun create entrypoint for Vite templates"],
+  ["create-bmkl", "Pre-release package-manager entrypoint for Vite templates"],
   ["@bmkl/core", "BookmarkBuilder, loader, debug console, companion extension builder"],
   ["@bmkl/contracts", "typia-backed contracts for debug events, manifests, actions, and bridge messages"],
   ["@bmkl/runtime", "Shadow DOM, iframe, debug, action, and postMessage bridge helpers"],
@@ -95,94 +95,94 @@ const templates = [
     name: "lit-shadow",
     badge: "Default",
     title: "Lit + Shadow DOM",
-    command: "npm create bmkl@latest my-agent -- --template lit-shadow",
+    command: "pnpm cli -- create my-agent --local --template lit-shadow",
     body: "TS-first component structure without TSX, with Web Components and Shadow DOM fitting bookmarklet isolation naturally.",
   },
   {
     name: "ttsc-shadow",
     badge: "Compiler",
     title: "ttsc + Shadow DOM",
-    command: "pnpm create bmkl my-agent --template ttsc-shadow",
+    command: "pnpm cli -- create my-agent --local --template ttsc-shadow",
     body: "Turns on @ttsc/lint, @ttsc/strip, @ttsc/paths, graph scripts, and the Vite unplugin path in a TS-only bookmarklet.",
   },
   {
     name: "solid-shadow",
     badge: "Fast UI",
     title: "Solid + Shadow DOM",
-    command: "pnpm create bmkl my-agent --template solid-shadow",
+    command: "pnpm cli -- create my-agent --local --template solid-shadow",
     body: "Fine-grained UI for compact overlays. Keeps ttsc checks and graph scripts while leaving the JSX Vite transform alone.",
   },
   {
     name: "solid-query-shadow",
     badge: "TanStack",
     title: "Solid Query + Shadow DOM",
-    command: "pnpm create bmkl my-agent --template solid-query-shadow",
-    body: "Adds TanStack Query for cached async reads, API-backed panels, refetch flows, and server-state style bookmarklets.",
+    command: "pnpm cli -- create my-agent --local --template solid-query-shadow",
+    body: "Adds TanStack Query for cached page snapshots and refetch flows, with a clear path to API-backed panels when needed.",
   },
   {
     name: "react-shadow",
     badge: "React",
     title: "React + Shadow DOM",
-    command: "pnpm create bmkl my-agent --template react-shadow",
+    command: "pnpm cli -- create my-agent --local --template react-shadow",
     body: "Best when teams want to reuse React components or mirror an existing app workflow inside a bookmarklet.",
   },
   {
     name: "vanilla-shadow",
     badge: "Smallest",
     title: "Vanilla TS + Shadow DOM",
-    command: "bun create bmkl my-agent --template vanilla-shadow",
+    command: "pnpm cli -- create my-agent --local --template vanilla-shadow",
     body: "The dependency-light baseline for page utilities, DOM actions, and tiny scripts where a framework is unnecessary.",
   },
 ];
 
 const cliCommands = [
   {
-    command: "npm create bmkl@latest my-agent -- --template lit-shadow",
-    detail: "Use the standard npm create flow to scaffold the TS-first default template.",
+    command: "pnpm cli -- create my-agent --local --template lit-shadow",
+    detail: "Use the source workspace wrapper to scaffold the TS-first default template during pre-release.",
   },
   {
-    command: "pnpm create bmkl my-agent --template solid-query-shadow",
+    command: "pnpm cli -- create my-agent --local --template solid-query-shadow",
     detail: "Start with TanStack Query when the bookmarklet needs cached async data.",
   },
   {
-    command: "pnpm create bmkl my-agent --template ttsc-shadow",
+    command: "pnpm cli -- create my-agent --local --template ttsc-shadow",
     detail: "Use the compiler-aware template for lint diagnostics, strip transforms, path rewrites, and graph output.",
   },
   {
-    command: "bmkl templates --json",
-    detail: "List template metadata for docs, generators, and CI automation.",
+    command: "pnpm cli -- templates --json",
+    detail: "Source checkout — list template metadata for docs, generators, and CI automation.",
   },
   {
-    command: "bmkl dev --port 5173",
-    detail: "Start Vite and print a development bookmarklet that loads the module from localhost.",
+    command: "pnpm exec bmkl dev --port 5173",
+    detail: "Generated project — start Vite and print a development bookmarklet that loads the module from localhost.",
   },
   {
-    command: "bmkl dev --debug --target https://example.com",
-    detail: "Print a debug bookmarklet, serve a local console, and collect target-site events with direct POST plus popup relay.",
+    command: "pnpm exec bmkl dev --debug --target https://example.com",
+    detail: "Generated project — print a debug bookmarklet, serve a local console, and collect target-site events.",
   },
   {
-    command: "bmkl companion --target https://example.com --port 5173",
-    detail: "Build an unpacked MV3 companion extension when strict CSP blocks the bookmarklet delivery path.",
+    command: "pnpm exec bmkl companion --target https://example.com --port 5173",
+    detail: "Generated project — build an unpacked MV3 companion when strict CSP blocks bookmarklet delivery.",
   },
   {
     command: "pnpm e2e:debug",
-    detail: "Run the automated matrix for bookmarklet debug plus the strict script-src companion fixture.",
+    detail: "Source checkout — run bookmarklet debug and strict script-src companion fixtures.",
   },
   {
-    command: "bmkl build --base-url https://cdn.example.com/",
-    detail: "Build the remote loader, IIFE app, inline fallback, manifest, install page, and report.",
+    command: "pnpm exec bmkl build --base-url https://cdn.example.com/",
+    detail: "Generated project — build the remote loader, app, inline fallback, manifest, install page, and report.",
   },
   {
-    command: "bmkl inspect",
-    detail: "Check artifact sizes, bookmarklet length, manifest target, and CSP fallback warnings.",
+    command: "pnpm exec bmkl inspect",
+    detail: "Generated project — check artifact sizes, bookmarklet length, manifest target, and CSP fallback warnings.",
   },
   {
-    command: "bmkl doctor",
-    detail: "Check entry files, ttsc setup, typia contracts, remote base URL, and generated artifacts.",
+    command: "pnpm exec bmkl doctor",
+    detail: "Generated project — check entry files, ttsc setup, contracts, remote base URL, and artifacts.",
   },
   {
-    command: "bmkl contracts validate-debug-report report.json",
-    detail: "Validate copied debug reports, manifests, debug events, and bridge messages against typia contracts.",
+    command: "pnpm exec bmkl contracts validate-debug-report report.json",
+    detail: "Generated project — validate copied debug reports against typia contracts.",
   },
 ];
 
@@ -200,7 +200,7 @@ const debugFlow = [
   [
     "1",
     "Start local debug",
-    "Run bmkl dev --debug --target <site>. BMKL serves Vite plus /__bmkl/debug on localhost.",
+    "Run pnpm exec bmkl dev --debug --target <site>. BMKL serves Vite plus /__bmkl/debug on localhost.",
   ],
   [
     "2",
@@ -228,12 +228,12 @@ const companionFlow = [
   [
     "1",
     "Keep bmkl dev running",
-    "Run bmkl dev --debug --target <site> so the localhost console and event collector stay available.",
+    "Run pnpm exec bmkl dev --debug --target <site> so the localhost console and event collector stay available.",
   ],
   [
     "2",
     "Build the companion",
-    "Run bmkl companion --target <site> --port 5173 to bundle the current entry into an unpacked extension.",
+    "Run pnpm exec bmkl companion --target <site> --port 5173 to bundle the current entry into an unpacked extension.",
   ],
   [
     "3",
@@ -505,11 +505,15 @@ function App() {
           </div>
 
           <div class="hero-copy">
-            <p class="eyebrow">Vite-first bookmarklet framework</p>
+            <p class="eyebrow">Pre-release · Vite-first BMKL</p>
             <h1 id="hero-heading">BMKL</h1>
             <p class="lede">
               Build bookmarklets as remote-updatable in-page apps with Vite,
               ttsc checks, and a typed runtime surface.
+            </p>
+            <p>
+              Run the copied command from the root of an installed BMKL source
+              checkout while packages are still pre-release.
             </p>
             <div class="hero-actions">
               <button
@@ -524,8 +528,8 @@ function App() {
                 )}
                 <span>
                   {copiedCommand() === "hero-create"
-                    ? "Create command copied"
-                    : "Copy create command"}
+                    ? "Local command copied"
+                    : "Copy local create command"}
                 </span>
                 <ArrowRight size={18} />
               </button>
@@ -549,8 +553,9 @@ function App() {
               One create path, one build path, six Vite templates.
             </h2>
             <p>
-              Start with the package-manager create command, then use bmkl
-              inside the generated project for dev, build, inspect, and doctor.
+              Build the workspace packages once, then use the local create mode
+              while BMKL is in pre-release. The generated project links back to
+              this checkout and carries bmkl for dev, build, inspect, and doctor.
             </p>
           </div>
           <ol class="steps">
@@ -586,7 +591,9 @@ function App() {
             <p>
               BMKL keeps Query, React, and framework dependencies opt-in so
               ordinary bookmarklets stay lean while data-heavy tools still have
-              a ready starter.
+              a ready starter. Run <code>pnpm build:packages</code> once; the
+              <code>--local</code> commands below then link each generated app
+              to this checkout until the packages are published.
             </p>
           </div>
           <ul class="template-list">
@@ -617,16 +624,18 @@ function App() {
           <div class="section-label">CLI</div>
           <div class="cli-layout">
             <div class="cli-copy">
-              <h2 id="cli-heading">Create with npm. Work with bmkl.</h2>
+              <h2 id="cli-heading">Create from source. Work with bmkl.</h2>
               <p>
-                Project generation follows the JavaScript create convention.
-                The generated app then carries bmkl scripts for local dev,
+                npm publishing has not started, so project generation currently
+                uses the workspace wrapper with <code>--local</code>. That mode
+                writes file dependencies and pnpm overrides for this checkout;
+                the generated app then carries bmkl scripts for local dev,
                 release artifacts, diagnostics, and install pages.
               </p>
               <div class="cli-badges" aria-label="CLI capabilities">
                 <span>
                   <PackageCheck size={16} />
-                  create-bmkl
+                  pre-release workspace
                 </span>
                 <span>
                   <Terminal size={16} />
@@ -692,8 +701,8 @@ function App() {
                 logging them.
               </p>
               <div class="debug-terminal" aria-label="Debug command">
-                <code>bmkl dev --debug --target https://example.com</code>
-                <code>bmkl companion --target https://example.com --port 5173</code>
+                <code>pnpm exec bmkl dev --debug --target https://example.com</code>
+                <code>pnpm exec bmkl companion --target https://example.com --port 5173</code>
                 <code>Debug console: http://127.0.0.1:5173/__bmkl/debug</code>
                 <code>Debug bookmarklet: javascript:(...)</code>
               </div>
@@ -776,7 +785,8 @@ function App() {
               <p>
                 BMKL keeps bundling, type checks, generated contracts, action
                 bridge helpers, optional compiler plugins, graph output, and
-                runtime mounting in separate packages.
+                runtime mounting in separate packages. This package split is
+                tested locally but is not available from npm yet.
               </p>
               <div class="meta-line">
                 <ShieldCheck size={18} />

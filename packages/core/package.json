@@ -2,6 +2,7 @@
   "name": "@bmkl/core",
   "version": "0.1.0",
   "description": "Core builder and development APIs for Vite-powered BMKL bookmarklets.",
+  "homepage": "https://bookmarklet.and.guide",
   "keywords": ["bookmarklet", "builder", "vite"],
   "type": "module",
   "engines": {

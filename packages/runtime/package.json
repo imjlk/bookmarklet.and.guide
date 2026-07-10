@@ -2,6 +2,7 @@
   "name": "@bmkl/runtime",
   "version": "0.1.0",
   "description": "Browser runtime helpers for isolated BMKL mounts, actions, and postMessage bridges.",
+  "homepage": "https://bookmarklet.and.guide",
   "keywords": ["bookmarklet", "runtime", "shadow-dom"],
   "type": "module",
   "engines": {

@@ -2,6 +2,7 @@
   "name": "@bmkl/vite",
   "version": "0.1.0",
   "description": "Vite plugin for building BMKL bookmarklets as IIFE bundles.",
+  "homepage": "https://bookmarklet.and.guide",
   "keywords": ["bookmarklet", "plugin", "vite"],
   "type": "module",
   "engines": {

@@ -20,8 +20,9 @@ export default defineConfig({
 
 `devOrigin` limits the development server's CORS response to the target page
 origin. Without it, development CORS is open while Vite remains bound to its
-configured host. Generated projects normally use `bmkl dev --target <url>`,
-which applies the same target-origin policy through the CLI.
+configured host. Generated projects normally invoke the CLI with
+`pnpm exec bmkl dev --target <url>`, which applies the same target-origin policy
+through the CLI.
 
 BMKL is currently a source preview and this package is not published to npm
 yet. See [bookmarklet.and.guide](https://bookmarklet.and.guide) and the

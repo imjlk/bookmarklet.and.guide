@@ -29,10 +29,12 @@ jobs:
           node-version: 22.12.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm exec playwright install --with-deps chromium firefox webkit
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm test
+        env:
+          BMKL_RUNTIME_BROWSERS: chromium,firefox,webkit
       - run: pnpm e2e:debug
 
   template-smoke:
@@ -51,6 +53,59 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:templates
+
+  package-tarball-smoke:
+    name: Packed package and bin smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.7.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install tarballs in a clean consumer and execute bins
+        shell: bash
+        run: |
+          set -euo pipefail
+          packs="$RUNNER_TEMP/bmkl-packs"
+          consumer="$RUNNER_TEMP/bmkl-consumer"
+          bmkl_version="$(node -p "require('./packages/cli/package.json').version")"
+          create_version="$(node -p "require('./packages/create/package.json').version")"
+          mkdir -p "$packs" "$consumer"
+
+          pnpm --dir packages/contracts pack --out "$packs/bmkl-contracts.tgz"
+          pnpm --dir packages/core pack --out "$packs/bmkl-core.tgz"
+          pnpm --dir packages/runtime pack --out "$packs/bmkl-runtime.tgz"
+          pnpm --dir packages/templates pack --out "$packs/bmkl-templates.tgz"
+          pnpm --dir packages/vite pack --out "$packs/bmkl-vite.tgz"
+          pnpm --dir packages/cli pack --out "$packs/bmkl-cli.tgz"
+          pnpm --dir packages/create pack --out "$packs/create-bmkl.tgz"
+
+          for tarball in "$packs"/*.tgz; do
+            tar -tzf "$tarball" | grep -Fx 'package/README.md' >/dev/null
+          done
+
+          cd "$consumer"
+          npm init --yes
+          npm install --ignore-scripts "$packs"/*.tgz
+
+          node --input-type=module -e 'await Promise.all(["@bmkl/contracts", "@bmkl/core", "@bmkl/runtime", "@bmkl/templates", "@bmkl/vite"].map((name) => import(name)))'
+
+          test "$(./node_modules/.bin/bmkl --version)" = "$bmkl_version"
+          test "$(./node_modules/.bin/bmk --version)" = "$bmkl_version"
+          test "$(./node_modules/.bin/create-bmkl --version)" = "$create_version"
+
+          ./node_modules/.bin/create-bmkl scaffold --template vanilla-shadow
+          test -f scaffold/package.json
+          test -f scaffold/bookmarklet.config.ts
+          test -f scaffold/src/inject.ts
+          node -e 'const manifest = require("./scaffold/package.json"); if (manifest.dependencies["@bmkl/runtime"] !== process.argv[1] || manifest.devDependencies["@bmkl/cli"] !== process.argv[1]) process.exit(1)' "$bmkl_version"
 
   windows-portability:
     name: Windows package portability

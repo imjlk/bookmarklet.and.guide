@@ -2,6 +2,7 @@
   "name": "@bmkl/contracts",
   "version": "0.1.0",
   "description": "Runtime-validated BMKL contracts for bridge, manifest, action, and debug payloads.",
+  "homepage": "https://bookmarklet.and.guide",
   "keywords": ["bookmarklet", "contracts", "typia"],
   "type": "module",
   "engines": {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { chromium } from "playwright";
+import { chromium, firefox, webkit } from "playwright";
 
 import {
   assertBmklBridgeMessage,
@@ -24,7 +24,22 @@ await testBridgeContractParity();
 await testBridgeLifecycle();
 await testActionValidation();
 await testAbortedActionDoesNotPost();
-await testBrowserMounts();
+const browserTypes = { chromium, firefox, webkit };
+const requestedBrowsers = (
+  process.env.BMKL_RUNTIME_BROWSERS ?? "chromium"
+)
+  .split(",")
+  .map((name) => name.trim())
+  .filter(Boolean);
+for (const browserName of requestedBrowsers) {
+  const browserType = browserTypes[browserName];
+  if (!browserType) {
+    throw new Error(
+      `Unknown BMKL runtime browser: ${browserName}. Choose chromium, firefox, or webkit.`,
+    );
+  }
+  await testBrowserMounts(browserName, browserType);
+}
 
 console.log("✓ runtime smoke");
 
@@ -285,8 +300,8 @@ async function testAbortedActionDoesNotPost() {
   assert.deepEqual(posts, []);
 }
 
-async function testBrowserMounts() {
-  const browser = await chromium.launch({ headless: true });
+async function testBrowserMounts(browserName, browserType) {
+  const browser = await browserType.launch({ headless: true });
   try {
     const page = await browser.newPage();
     page.setDefaultTimeout(10_000);
@@ -366,7 +381,7 @@ async function testBrowserMounts() {
         };
       }),
       10_000,
-      "runtime browser assertions",
+      `${browserName} runtime browser assertions`,
     );
 
     assert.equal(result.pageElementRemains, true);
