@@ -9,8 +9,7 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["vite/client"],
-    "plugins": [{ "transform": "@ttsc/strip" }]
+    "types": ["vite/client"]
   },
   "include": ["src", "bookmarklet.config.ts", "vite.config.ts"]
 }

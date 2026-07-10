@@ -34,14 +34,51 @@ for (const template of TEMPLATE_NAMES) {
     const destination = join(tempRoot, "app");
 
     try {
-      await createProject({ destination, template });
+      const result = await createProject({ destination, template });
       const manifest = JSON.parse(
         await readFile(join(destination, "package.json"), "utf8"),
       );
       assert.equal(manifest.dependencies["@bmkl/runtime"], packageVersion);
       assert.equal(manifest.devDependencies["@bmkl/cli"], packageVersion);
       assert.equal(manifest.packageManager, expectedPackageManager);
+      assert.equal(result.packageManager, expectedPackageManager);
+      assert.equal(manifest.scripts.dev, "bmkl dev");
+      assert.equal(manifest.scripts.preview, "vite");
+      assert.equal(manifest.scripts.graph, "ttsc-graph view");
+      assert.equal(manifest.scripts["graph:mcp"], "ttsc-graph");
+      assert.equal(manifest.devDependencies["@ttsc/graph"], "^0.18.0");
       assert.doesNotMatch(JSON.stringify(manifest), /workspace:/);
+
+      const previewHtml = await readFile(join(destination, "index.html"), "utf8");
+      assert.match(previewHtml, /src="\/src\/preview\.ts"/);
+      const previewEntry = await readFile(
+        join(destination, "src", "preview.ts"),
+        "utf8",
+      );
+      assert.match(previewEntry, /import \{ run \} from "\.\/inject\.js";/);
+      assert.match(previewEntry, /run\(\);/);
+
+      const readme = await readFile(join(destination, "README.md"), "utf8");
+      assert.match(readme, /^# app$/m);
+      assert.match(readme, /pnpm dev/);
+      assert.match(readme, /Install-once dev bookmarklet/);
+      assert.match(readme, /pnpm preview/);
+      assert.match(readme, /https:\/\/bookmarklet\.and\.guide\//);
+      assert.doesNotMatch(readme, /__BMKL_/);
+
+      if (template === "ttsc-shadow") {
+        for (const dependency of ["@ttsc/lint", "@ttsc/paths", "@ttsc/strip"]) {
+          assert.equal(manifest.devDependencies[dependency], "^0.18.0");
+        }
+      } else {
+        for (const dependency of ["@ttsc/lint", "@ttsc/paths", "@ttsc/strip"]) {
+          assert.equal(manifest.devDependencies[dependency], undefined);
+        }
+        const tsconfig = JSON.parse(
+          await readFile(join(destination, "tsconfig.json"), "utf8"),
+        );
+        assert.equal(tsconfig.compilerOptions.plugins, undefined);
+      }
 
       const gitignore = await readFile(join(destination, ".gitignore"), "utf8");
       assert.match(gitignore, /^\.bmkl-dev-cert\/$/m);

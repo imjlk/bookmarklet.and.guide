@@ -17,12 +17,28 @@
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.22);
 }
 
-.bmkl-panel header {
+.bmkl-panel header,
+.bmkl-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.bmkl-panel header {
   font-weight: 760;
+}
+
+.bmkl-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.bmkl-status {
+  margin: 12px 0 0;
+  color: GrayText;
+  color: color-mix(in srgb, CanvasText 64%, transparent);
+  font-size: 13px;
 }
 
 .bmkl-panel button {

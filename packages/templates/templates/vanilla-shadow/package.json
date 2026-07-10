@@ -8,10 +8,12 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "bmkl dev",
+    "preview": "vite",
     "build": "bmkl build",
     "doctor": "bmkl doctor",
-    "graph": "ttsc-graph",
+    "graph": "ttsc-graph view",
+    "graph:mcp": "ttsc-graph",
     "inspect": "bmkl inspect",
     "install-page": "bmkl install-page",
     "typecheck": "ttsc --noEmit"
@@ -24,9 +26,6 @@
     "@bmkl/core": "__BMKL_VERSION__",
     "@bmkl/vite": "__BMKL_VERSION__",
     "@ttsc/graph": "^0.18.0",
-    "@ttsc/lint": "^0.18.0",
-    "@ttsc/paths": "^0.18.0",
-    "@ttsc/strip": "^0.18.0",
     "esbuild": "^0.28.1",
     "ttsc": "^0.18.0",
     "typescript": "^7.0.2",

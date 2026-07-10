@@ -31,6 +31,14 @@
 
 .bmkl-actions {
   justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.bmkl-status {
+  margin: 12px 0 0;
+  color: GrayText;
+  color: color-mix(in srgb, CanvasText 64%, transparent);
+  font-size: 13px;
 }
 
 .bmkl-panel button {

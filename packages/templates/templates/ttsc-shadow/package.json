@@ -8,13 +8,15 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "bmkl dev",
+    "preview": "vite",
     "build": "bmkl build",
     "doctor": "bmkl doctor",
     "emit:types": "ttsc --project tsconfig.emit.json --emitDeclarationOnly",
     "fix": "ttsc fix",
     "format": "ttsc format",
-    "graph": "ttsc-graph",
+    "graph": "ttsc-graph view",
+    "graph:mcp": "ttsc-graph",
     "inspect": "bmkl inspect",
     "install-page": "bmkl install-page",
     "typecheck": "ttsc --noEmit"

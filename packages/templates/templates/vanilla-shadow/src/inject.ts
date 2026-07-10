@@ -3,6 +3,7 @@ import {
   logBookmarkletDebugEvent,
   mountBookmarkletApp,
 } from "@bmkl/runtime";
+import { copyText } from "./copyText.js";
 import styles from "./style.css?inline";
 
 export function run(): void {
@@ -19,24 +20,51 @@ export function run(): void {
         <button type="button" data-action="close" aria-label="Close">×</button>
       </header>
       <p>Selection: <strong data-selection></strong></p>
-      <button type="button" data-action="highlight">Highlight selection</button>
+      <div class="bmkl-actions">
+        <button type="button" data-action="refresh">Refresh selection</button>
+        <button type="button" data-action="copy">Copy selection / URL</button>
+      </div>
+      <p class="bmkl-status" data-status role="status" aria-live="polite">
+        Copy the selection, or the page URL when nothing is selected.
+      </p>
     </section>
   `;
 
-  const selectedText = String(globalThis.getSelection?.() ?? "").trim() || "none";
   const selection = ctx.root.querySelector<HTMLElement>("[data-selection]");
-  if (selection) {
-    selection.textContent = selectedText;
-  }
+  const status = ctx.root.querySelector<HTMLElement>("[data-status]");
+  const refreshSelection = (): string => {
+    const selectedText = String(globalThis.getSelection?.() ?? "").trim();
+    if (selection) {
+      selection.textContent = selectedText || "none";
+    }
+    return selectedText;
+  };
+  refreshSelection();
 
   ctx.root
     .querySelector('[data-action="close"]')
     ?.addEventListener("click", ctx.destroy);
 
   ctx.root
-    .querySelector('[data-action="highlight"]')
+    .querySelector('[data-action="refresh"]')
     ?.addEventListener("click", () => {
-      document.body.dataset.bmklLastAction = "highlight";
+      const selectedText = refreshSelection();
+      if (status) {
+        status.textContent = selectedText
+          ? `Read ${selectedText.length} selected characters.`
+          : "No selection found; copy will use the page URL.";
+      }
+    });
+
+  ctx.root
+    .querySelector('[data-action="copy"]')
+    ?.addEventListener("click", async () => {
+      const selectedText = refreshSelection();
+      const label = selectedText ? "selection" : "page URL";
+      const message = await copyText(selectedText || location.href, label);
+      if (status) {
+        status.textContent = message;
+      }
     });
 
   logBookmarkletDebugEvent("app-mounted", "__BMKL_PROJECT_NAME__ mounted");

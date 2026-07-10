@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/solid-query";
-import { Match, Switch } from "solid-js";
+import { createSignal, Match, Switch } from "solid-js";
+import { copyText } from "./copyText.js";
 
 export interface AppProps {
   destroy(): void;
@@ -13,6 +14,9 @@ interface PageSnapshot {
 }
 
 export function App(props: AppProps) {
+  const [copyStatus, setCopyStatus] = createSignal(
+    "Refetch the snapshot after the page changes, then copy its summary.",
+  );
   const snapshot = useQuery(() => ({
     queryKey: ["page-snapshot", location.href],
     queryFn: readPageSnapshot,
@@ -20,6 +24,24 @@ export function App(props: AppProps) {
     retry: 1,
     staleTime: 30_000,
   }));
+
+  const copySnapshot = async () => {
+    const data = snapshot.data;
+    if (!data) {
+      setCopyStatus("Wait for the page snapshot before copying.");
+      return;
+    }
+
+    const summary = [
+      data.title || "Untitled page",
+      data.href,
+      `${data.wordCount} words`,
+      data.selectedText ? `Selection: ${data.selectedText}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    setCopyStatus(await copyText(summary, "page snapshot"));
+  };
 
   return (
     <section class="bmkl-panel">
@@ -59,10 +81,13 @@ export function App(props: AppProps) {
         <button type="button" onClick={() => snapshot.refetch()}>
           Refetch
         </button>
-        <button type="button" onClick={() => document.body.toggleAttribute("data-bmkl-active")}>
-          Mark page
+        <button type="button" onClick={copySnapshot}>
+          Copy snapshot
         </button>
       </div>
+      <p class="bmkl-status" role="status" aria-live="polite">
+        {copyStatus()}
+      </p>
     </section>
   );
 }

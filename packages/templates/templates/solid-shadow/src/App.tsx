@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { copyText } from "./copyText.js";
 
 export interface AppProps {
   destroy(): void;
@@ -6,6 +7,26 @@ export interface AppProps {
 
 export function App(props: AppProps) {
   const [selection, setSelection] = createSignal(readSelection());
+  const [status, setStatus] = createSignal(
+    "Copy the selection, or the page URL when nothing is selected.",
+  );
+
+  const refreshSelection = () => {
+    const nextSelection = readSelection();
+    setSelection(nextSelection);
+    setStatus(
+      nextSelection
+        ? `Read ${nextSelection.length} selected characters.`
+        : "No selection found; copy will use the page URL.",
+    );
+  };
+
+  const copySelectionOrUrl = async () => {
+    const nextSelection = readSelection();
+    setSelection(nextSelection);
+    const label = nextSelection ? "selection" : "page URL";
+    setStatus(await copyText(nextSelection || location.href, label));
+  };
 
   return (
     <section class="bmkl-panel">
@@ -19,13 +40,16 @@ export function App(props: AppProps) {
         Selection: <strong>{selection() || "none"}</strong>
       </p>
       <div class="bmkl-actions">
-        <button type="button" onClick={() => setSelection(readSelection())}>
+        <button type="button" onClick={refreshSelection}>
           Refresh
         </button>
-        <button type="button" onClick={() => document.body.toggleAttribute("data-bmkl-active")}>
-          Mark page
+        <button type="button" onClick={copySelectionOrUrl}>
+          Copy selection / URL
         </button>
       </div>
+      <p class="bmkl-status" role="status" aria-live="polite">
+        {status()}
+      </p>
     </section>
   );
 }

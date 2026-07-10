@@ -1,3 +1,4 @@
+import { copyText } from "./copyText.js";
 import { devAssert } from "./devAssert.js";
 import {
   readPageSnapshot,
@@ -18,10 +19,26 @@ export function renderPanel(root: HTMLElement, destroy: () => void): void {
     .querySelector('[data-action="close"]')
     ?.addEventListener("click", destroy);
   root
-    .querySelector('[data-action="mark"]')
+    .querySelector('[data-action="copy"]')
     ?.addEventListener("click", () => {
-      document.body.dataset.bmklTtscTemplate = "active";
+      void copySnapshot(root, snapshot);
     });
+}
+
+async function copySnapshot(root: HTMLElement, snapshot: PageSnapshot): Promise<void> {
+  const text = [
+    snapshot.title || "Untitled page",
+    snapshot.href,
+    `${snapshot.wordCount} words`,
+    snapshot.selectedText ? `Selection: ${snapshot.selectedText}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const message = await copyText(text, "page snapshot");
+  const status = root.querySelector<HTMLElement>("[data-status]");
+  if (status) {
+    status.textContent = message;
+  }
 }
 
 function panelMarkup(snapshot: PageSnapshot): string {
@@ -45,7 +62,10 @@ function panelMarkup(snapshot: PageSnapshot): string {
           <dd>${escapeHtml(snapshot.href)}</dd>
         </div>
       </dl>
-      <button type="button" data-action="mark">Mark page</button>
+      <button type="button" data-action="copy">Copy snapshot</button>
+      <p class="bmkl-status" data-status role="status" aria-live="polite">
+        Copy this typed page snapshot to verify the starter action.
+      </p>
     </section>
   `;
 }

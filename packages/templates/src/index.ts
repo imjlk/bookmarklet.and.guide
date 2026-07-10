@@ -44,6 +44,7 @@ export interface CreateProjectResult {
   projectName: string;
   globalName: string;
   projectId: string;
+  packageManager: string;
 }
 
 interface TemplateReplacements {
@@ -84,8 +85,8 @@ const TEMPLATE_INFOS: TemplateInfo[] = [
     title: "Solid Query + Shadow DOM",
     framework: "Solid + TanStack Query",
     language: "TypeScript / TSX",
-    description: "A Solid starter with TanStack Query wired for cached async data.",
-    recommendedFor: "Bookmarklets that read APIs, cache page data, or refetch state.",
+    description: "A Solid starter with TanStack Query for cached async page analysis.",
+    recommendedFor: "Bookmarklets that cache page reads, refetch DOM state, or add API data.",
   },
   {
     name: "react-shadow",
@@ -219,6 +220,7 @@ export async function createProject(
   return {
     destination,
     globalName,
+    packageManager,
     projectId,
     projectName,
     template,
