@@ -1,12 +1,19 @@
 import { mkdtemp, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { build as viteBuild, mergeConfig } from "vite";
 import type {
   BookmarkletBuildConfig,
   CompanionBuildOptions,
   CompanionBuildResult,
 } from "./types.js";
-import { ensureDir, resolveFrom, writeTextFile } from "./path.js";
+import { addDebugToken, loadOrCreateDebugToken } from "./debug-token.js";
+import {
+  ensureDir,
+  resolveFrom,
+  resolveOutputFile,
+  resolveSafeOutputDir,
+  writeTextFile,
+} from "./path.js";
 
 const COMPANION_CONTENT_FILE = "companion-content.js";
 const COMPANION_SERVICE_WORKER_FILE = "service-worker.js";
@@ -15,87 +22,118 @@ export async function buildCompanionExtension(
   config: BookmarkletBuildConfig,
   options: CompanionBuildOptions = {},
 ): Promise<CompanionBuildResult> {
-  const outDir = resolveFrom(
+  const outDir = resolveSafeOutputDir(
     config.root,
     options.outDir ?? join(config.outDir, "companion-extension"),
+    "Companion output directory",
   );
   const appEntry = resolveFrom(config.root, config.entry);
   const debugConsoleUrl =
     options.debugConsoleUrl ??
-    `http://${options.host ?? "127.0.0.1"}:${options.port ?? 5173}/__bmkl/debug`;
-  const targetMatch = toMatchPattern(options.target);
-  const tempDir = await mkdtemp(join(dirname(appEntry), ".bmkl-companion-"));
-  const entryFile = join(tempDir, "entry.ts");
+    createDefaultDebugConsoleUrl(options.host, options.port);
+  const target = normalizeCompanionUrl(options.target, "Companion target");
+  const debugConsole = normalizeCompanionUrl(
+    debugConsoleUrl,
+    "Companion debug console URL",
+  );
+  const debugToken = await loadOrCreateDebugToken(config.root);
+  const authenticatedDebugConsoleUrl = addDebugToken(
+    debugConsole.href,
+    debugToken,
+  );
+  const targetMatch = target.matchPattern;
 
   await rm(outDir, { recursive: true, force: true });
   await ensureDir(outDir);
-  await writeTextFile(
-    entryFile,
-    createCompanionEntry({
-      appName: config.name,
-      debugConsoleUrl,
-      entry: appEntry,
-      globalName: config.globalName,
-      target: options.target ?? targetMatch,
-    }),
-  );
-
-  const previousBuilderFlag = process.env.BMKL_BUILDER;
-  const previousCompanionFlag = process.env.BMKL_COMPANION;
-  process.env.BMKL_BUILDER = "1";
-  process.env.BMKL_COMPANION = "1";
+  const tempDir = await mkdtemp(join(outDir, ".bmkl-companion-"));
+  const entryFile = join(tempDir, "entry.ts");
   try {
-    await viteBuild(
-      mergeConfig(
-        {
-          root: config.root,
-          configFile: config.vite?.configFile ?? undefined,
-        },
-        {
-          build: {
-            emptyOutDir: false,
-            lib: {
-              entry: entryFile,
-              name: `${config.globalName}Companion`,
-              formats: ["iife"],
-              fileName: () => COMPANION_CONTENT_FILE,
-            },
-            minify: config.vite?.minify ?? "esbuild",
-            outDir,
-            sourcemap: config.vite?.sourcemap ?? false,
-          },
-        },
-      ),
+    await writeTextFile(
+      entryFile,
+      createCompanionEntry({
+        appName: config.name,
+        debugConsoleUrl: authenticatedDebugConsoleUrl,
+        entry: appEntry,
+        globalName: config.globalName,
+        target: target.href,
+      }),
     );
+
+    const previousBuilderFlag = process.env.BMKL_BUILDER;
+    const previousCompanionFlag = process.env.BMKL_COMPANION;
+    process.env.BMKL_BUILDER = "1";
+    process.env.BMKL_COMPANION = "1";
+    try {
+      await viteBuild(
+        mergeConfig(
+          {
+            root: config.root,
+            configFile: config.vite?.configFile ?? undefined,
+          },
+          {
+            build: {
+              emptyOutDir: false,
+              lib: {
+                entry: entryFile,
+                name: `${config.globalName}Companion`,
+                formats: ["iife"],
+                fileName: () => COMPANION_CONTENT_FILE,
+              },
+              minify: config.vite?.minify ?? "esbuild",
+              outDir,
+              sourcemap: config.vite?.sourcemap ?? false,
+            },
+          },
+        ),
+      );
+    } finally {
+      if (previousBuilderFlag === undefined) {
+        delete process.env.BMKL_BUILDER;
+      } else {
+        process.env.BMKL_BUILDER = previousBuilderFlag;
+      }
+      if (previousCompanionFlag === undefined) {
+        delete process.env.BMKL_COMPANION;
+      } else {
+        process.env.BMKL_COMPANION = previousCompanionFlag;
+      }
+    }
   } finally {
-    if (previousBuilderFlag === undefined) {
-      delete process.env.BMKL_BUILDER;
-    } else {
-      process.env.BMKL_BUILDER = previousBuilderFlag;
-    }
-    if (previousCompanionFlag === undefined) {
-      delete process.env.BMKL_COMPANION;
-    } else {
-      process.env.BMKL_COMPANION = previousCompanionFlag;
-    }
     await rm(tempDir, { recursive: true, force: true });
   }
 
-  const manifestPath = join(outDir, "manifest.json");
-  const serviceWorkerPath = join(outDir, COMPANION_SERVICE_WORKER_FILE);
+  const manifestPath = resolveOutputFile(
+    outDir,
+    "manifest.json",
+    "Companion manifest",
+  );
+  const serviceWorkerPath = resolveOutputFile(
+    outDir,
+    COMPANION_SERVICE_WORKER_FILE,
+    "Companion service worker",
+  );
+  const readmePath = resolveOutputFile(outDir, "README.md", "Companion README");
   await writeTextFile(
     manifestPath,
-    `${JSON.stringify(createManifest(config, targetMatch), null, 2)}\n`,
+    `${JSON.stringify(
+      createManifest(config, targetMatch, debugConsole.matchPattern),
+      null,
+      2,
+    )}\n`,
   );
-  await writeTextFile(serviceWorkerPath, createServiceWorker());
+  await writeTextFile(serviceWorkerPath, createServiceWorker(target.origin));
   await writeTextFile(
-    join(outDir, "README.md"),
-    createCompanionReadme({ debugConsoleUrl, outDir, targetMatch }),
+    readmePath,
+    createCompanionReadme({
+      debugConsoleUrl: authenticatedDebugConsoleUrl,
+      outDir,
+      targetMatch,
+    }),
   );
 
   return {
     contentScriptPath: join(outDir, COMPANION_CONTENT_FILE),
-    debugConsoleUrl,
+    debugConsoleUrl: authenticatedDebugConsoleUrl,
     manifestPath,
     outDir,
     targetMatch,
@@ -105,6 +143,7 @@ export async function buildCompanionExtension(
 function createManifest(
   config: BookmarkletBuildConfig,
   targetMatch: string,
+  debugConsoleMatch: string,
 ): Record<string, unknown> {
   return {
     manifest_version: 3,
@@ -120,7 +159,7 @@ function createManifest(
       type: "module",
     },
     permissions: ["activeTab", "scripting"],
-    host_permissions: [targetMatch, "http://127.0.0.1:*/*", "http://localhost:*/*"],
+    host_permissions: Array.from(new Set([targetMatch, debugConsoleMatch])),
     content_scripts: [
       {
         matches: [targetMatch],
@@ -131,9 +170,19 @@ function createManifest(
   };
 }
 
-function createServiceWorker(): string {
-  return `chrome.action.onClicked.addListener(async (tab) => {
-  if (!tab.id) {
+function createServiceWorker(targetOrigin: string): string {
+  return `const TARGET_ORIGIN = ${JSON.stringify(targetOrigin)};
+
+chrome.action.onClicked.addListener(async (tab) => {
+  if (!tab.id || !tab.url) {
+    return;
+  }
+
+  try {
+    if (new URL(tab.url).origin !== TARGET_ORIGIN) {
+      return;
+    }
+  } catch {
     return;
   }
 
@@ -182,6 +231,12 @@ const appName = ${JSON.stringify(options.appName)};
 const globalName = ${JSON.stringify(options.globalName)};
 const debugConsoleUrl = ${JSON.stringify(options.debugConsoleUrl)};
 const target = ${JSON.stringify(options.target)};
+try {
+  const previousSession = globalThis.__BMKL_DEBUG_SESSION__;
+  if (previousSession && typeof previousSession.__bmklCleanup === "function") {
+    previousSession.__bmklCleanup();
+  }
+} catch {}
 const sessionId = "bmkl-companion-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
 const startedAt = new Date().toISOString();
 const events = [];
@@ -191,11 +246,12 @@ let overlayHost;
 let statusEl;
 let eventsEl;
 let collectorBlocked = false;
+let active = true;
 
 const debugEventsUrl = (() => {
   const url = new URL(debugConsoleUrl);
   url.pathname = url.pathname.replace(/\\/$/, "") + "/events";
-  url.search = "";
+  url.hash = "";
   return url.toString();
 })();
 
@@ -207,8 +263,13 @@ const page = () => ({
 });
 
 function openConsole() {
-  const url = debugConsoleUrl + (debugConsoleUrl.includes("?") ? "&" : "?") + "session=" + encodeURIComponent(sessionId) + "&origin=" + encodeURIComponent(location.origin);
-  debugWindow = window.open(url, "bmkl-debug-" + sessionId, "popup,width=980,height=720");
+  if (!active) {
+    return false;
+  }
+  const url = new URL(debugConsoleUrl);
+  url.searchParams.set("session", sessionId);
+  url.searchParams.set("origin", location.origin);
+  debugWindow = window.open(url.toString(), "bmkl-debug-" + sessionId, "popup,width=980,height=720");
   if (debugWindow) {
     setTimeout(() => replayEventsToConsole(), 250);
     setTimeout(() => replayEventsToConsole(), 1000);
@@ -217,6 +278,9 @@ function openConsole() {
 }
 
 function postToConsole(event) {
+  if (!active) {
+    return;
+  }
   try {
     debugWindow?.postMessage(event, new URL(debugConsoleUrl).origin);
   } catch {}
@@ -254,6 +318,9 @@ function reportCollectorBlocked() {
 }
 
 function emit(type, message, data) {
+  if (!active) {
+    return;
+  }
   const event = createEvent(type, message, data);
   events.push(event);
   if (events.length > 80) {
@@ -267,6 +334,9 @@ function emit(type, message, data) {
 }
 
 function emitLocal(type, message, data) {
+  if (!active) {
+    return;
+  }
   const event = createEvent(type, message, data);
   events.push(event);
   if (events.length > 80) {
@@ -342,7 +412,9 @@ function installOverlay() {
     }
   });
   shadow.querySelector("[data-copy]")?.addEventListener("click", () => copyReport());
-  shadow.querySelector("[data-rerun]")?.addEventListener("click", () => runApp());
+  shadow.querySelector("[data-rerun]")?.addEventListener("click", () => {
+    void runApp();
+  });
   document.documentElement.appendChild(host);
   overlayHost = host;
 }
@@ -377,7 +449,7 @@ async function copyReport() {
   }
 }
 
-function runApp() {
+async function runApp() {
   const api = globalThis[globalName];
   const run = typeof entryModule.run === "function" ? entryModule.run : api?.run;
   if (typeof run !== "function") {
@@ -385,14 +457,45 @@ function runApp() {
     return;
   }
   try {
-    run();
+    await run();
     emit("app-run", "Companion app run() completed");
   } catch (error) {
     emit("app-run-error", error?.message || "Companion app run() failed", { error: errorPayload(error) });
   }
 }
 
-globalThis.__BMKL_DEBUG_SESSION__ = {
+function handleWindowError(event) {
+  emit("window-error", event.message || "Uncaught error", {
+    filename: event.filename,
+    lineno: event.lineno,
+    colno: event.colno,
+    error: errorPayload(event.error),
+  });
+}
+
+function handleUnhandledRejection(event) {
+  const reason = event.reason;
+  emit("unhandled-rejection", reason?.message || String(reason), { error: errorPayload(reason) });
+}
+
+function cleanup() {
+  if (!active) {
+    return;
+  }
+  active = false;
+  window.removeEventListener("error", handleWindowError);
+  window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+  overlayHost?.remove();
+  if (globalThis.__BMKL_DEBUG_SESSION__ === debugSession) {
+    try {
+      delete globalThis.__BMKL_DEBUG_SESSION__;
+    } catch {
+      globalThis.__BMKL_DEBUG_SESSION__ = undefined;
+    }
+  }
+}
+
+const debugSession = {
   event: emit,
   error(error, phase = "app-error") {
     emit(phase, error?.message || String(error), { error: errorPayload(error) });
@@ -401,42 +504,62 @@ globalThis.__BMKL_DEBUG_SESSION__ = {
   report() {
     return { sessionId, startedAt, page: page(), events: events.slice() };
   },
+  __bmklCleanup: cleanup,
 };
+globalThis.__BMKL_DEBUG_SESSION__ = debugSession;
 
-window.addEventListener("error", (event) => {
-  emit("window-error", event.message || "Uncaught error", {
-    filename: event.filename,
-    lineno: event.lineno,
-    colno: event.colno,
-    error: errorPayload(event.error),
-  });
-});
-window.addEventListener("unhandledrejection", (event) => {
-  const reason = event.reason;
-  emit("unhandled-rejection", reason?.message || String(reason), { error: errorPayload(reason) });
-});
+window.addEventListener("error", handleWindowError);
+window.addEventListener("unhandledrejection", handleUnhandledRejection);
 
 installOverlay();
 emit("companion-started", "BMKL companion started", { appName });
-runApp();
+void runApp();
 `;
 }
 
-function toMatchPattern(target?: string): string {
-  if (!target) {
-    return "<all_urls>";
+interface NormalizedCompanionUrl {
+  href: string;
+  matchPattern: string;
+  origin: string;
+}
+
+function normalizeCompanionUrl(
+  input: string | undefined,
+  label: string,
+): NormalizedCompanionUrl {
+  const value = input?.trim();
+  if (!value) {
+    throw new Error(`${label} requires a concrete HTTP(S) URL.`);
   }
-  if (target === "<all_urls>" || target.includes("*")) {
-    return target;
+  if (value === "<all_urls>" || value.includes("*")) {
+    throw new Error(`${label} does not allow wildcard or <all_urls> patterns.`);
   }
 
+  let url: URL;
   try {
-    const url = new URL(target);
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      return "<all_urls>";
-    }
-    return `${url.protocol}//${url.host}/*`;
-  } catch {
-    return target;
+    url = new URL(value);
+  } catch (error) {
+    throw new Error(`${label} must be a valid absolute URL: ${value}`, {
+      cause: error,
+    });
   }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`${label} must use an http: or https: URL: ${value}`);
+  }
+  if (url.username || url.password) {
+    throw new Error(`${label} must not contain credentials.`);
+  }
+
+  return {
+    href: url.toString(),
+    matchPattern: `${url.protocol}//${url.host}/*`,
+    origin: url.origin,
+  };
+}
+
+function createDefaultDebugConsoleUrl(host = "127.0.0.1", port = 5173): string {
+  const normalizedHost =
+    host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `http://${normalizedHost}:${port}/__bmkl/debug`;
 }

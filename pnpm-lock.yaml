@@ -108,6 +108,9 @@ importers:
         specifier: ^8.1.4
         version: 8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)
     devDependencies:
+      esbuild:
+        specifier: ^0.28.1
+        version: 0.28.1
       ttsc:
         specifier: ^0.18.0
         version: 0.18.0
@@ -132,6 +135,10 @@ importers:
         version: 7.0.2
 
   packages/runtime:
+    dependencies:
+      '@bmkl/contracts':
+        specifier: workspace:*
+        version: link:../contracts
     devDependencies:
       ttsc:
         specifier: ^0.18.0

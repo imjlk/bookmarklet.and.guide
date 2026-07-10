@@ -14,6 +14,11 @@ import {
 } from "vite";
 import { buildCompanionExtension } from "./companion.js";
 import { installDebugConsoleMiddleware } from "./debug-console.js";
+import {
+  addDebugToken,
+  hasValidDebugToken,
+  loadOrCreateDebugToken,
+} from "./debug-token.js";
 import { toBookmarklet } from "./encoder.js";
 import { createInstallPage } from "./install-page.js";
 import {
@@ -24,7 +29,15 @@ import {
   createRemoteScriptLoader,
 } from "./loader.js";
 import { createManifest } from "./manifest.js";
-import { ensureDir, joinUrl, resolveFrom, writeTextFile } from "./path.js";
+import {
+  ensureDir,
+  joinUrl,
+  resolveFrom,
+  resolveOutputFile,
+  resolveSafeOutputDir,
+  toOutputFileName,
+  writeTextFile,
+} from "./path.js";
 import { runCommand } from "./process.js";
 import { createBuildReport } from "./report.js";
 import type {
@@ -47,10 +60,10 @@ export class BookmarkBuilder {
 
   async build(): Promise<BookmarkletBuildResult> {
     const warnings: string[] = [];
+    const paths = this.paths();
     await this.prepareTtsc(warnings);
     await this.typecheck(warnings);
 
-    const paths = this.paths();
     await rm(paths.outDir, { force: true, recursive: true });
     await ensureDir(paths.remoteDir);
     await ensureDir(paths.inlineDir);
@@ -143,11 +156,15 @@ export class BookmarkBuilder {
   }
 
   async dev(options: DevServerOptions = {}): Promise<DevServerResult> {
+    const debugToken = options.debug
+      ? await loadOrCreateDebugToken(this.config.root)
+      : undefined;
     let devAddress = "";
     const addressFallback = () =>
       `${options.https ? "https" : "http"}://${options.host ?? "127.0.0.1"}:${options.port ?? 5173}/`;
     const currentAddress = () => devAddress || addressFallback();
     const launcherPath = "/__bmkl/launcher.js";
+    const devCors = createDevCorsOption(options.target);
     const httpsOptions = options.https
       ? await this.createDevHttpsOptions()
       : undefined;
@@ -156,6 +173,22 @@ export class BookmarkBuilder {
       root: this.config.root,
       configFile: this.config.vite?.configFile || undefined,
       plugins: [
+        ...(debugToken
+          ? [
+              {
+                name: "bmkl:debug-auth-guard",
+                configureServer: (viteServer: ViteDevServer) => {
+                  installDebugAuthGuard(viteServer, debugToken, launcherPath);
+                },
+              },
+              {
+                name: "bmkl:debug-cors",
+                configureServer: (viteServer: ViteDevServer) => {
+                  installDevCorsMiddleware(viteServer, devCors);
+                },
+              },
+            ]
+          : []),
         {
           name: "bmkl:dev-launcher",
           configureServer: (viteServer: ViteDevServer) => {
@@ -167,12 +200,26 @@ export class BookmarkBuilder {
               }
 
               const moduleUrl = new URL(this.config.entry, currentAddress()).toString();
-              const debugConsoleUrl = new URL("__bmkl/debug", currentAddress()).toString();
               const debugRequested =
                 url.searchParams.get("debug") === "1" ||
                 url.searchParams.get("mode") === "debug";
+              if (
+                debugRequested &&
+                debugToken &&
+                !hasValidDebugToken(url, debugToken)
+              ) {
+                res.statusCode = 404;
+                res.end();
+                return;
+              }
+              const debugConsoleUrl = debugToken
+                ? addDebugToken(
+                    new URL("__bmkl/debug", currentAddress()).toString(),
+                    debugToken,
+                  )
+                : new URL("__bmkl/debug", currentAddress()).toString();
               const source =
-                debugRequested && options.debug
+                debugRequested && debugToken
                   ? createDebugDevBookmarkletSource({
                       id: `${this.loaderDomId()}__debug_dev`,
                       moduleUrl,
@@ -195,13 +242,14 @@ export class BookmarkBuilder {
             });
           },
         },
-        ...(options.debug
+        ...(debugToken
           ? [
               {
                 name: "bmkl:debug-console",
                 configureServer: (viteServer: ViteDevServer) => {
                   installDebugConsoleMiddleware(viteServer, {
                     appName: this.config.name,
+                    token: debugToken,
                   });
                 },
               },
@@ -209,7 +257,7 @@ export class BookmarkBuilder {
           : []),
       ],
       server: {
-        cors: createDevCorsOption(options.target),
+        cors: debugToken ? false : devCors,
         host: options.host ?? "127.0.0.1",
         port: options.port ?? 5173,
         strictPort: options.strictPort ?? false,
@@ -223,8 +271,11 @@ export class BookmarkBuilder {
     devAddress = address;
     const moduleUrl = new URL(this.config.entry, address).toString();
     const launcherUrl = new URL(launcherPath.replace(/^\//, ""), address).toString();
-    const debugLauncherUrl = options.debug
-      ? new URL(`${launcherPath.replace(/^\//, "")}?debug=1`, address).toString()
+    const debugLauncherUrl = debugToken
+      ? addDebugToken(
+          new URL(`${launcherPath.replace(/^\//, "")}?debug=1`, address).toString(),
+          debugToken,
+        )
       : undefined;
     const launcherBookmarkletUrl = toBookmarklet(
       createDevLauncherBookmarkletSource(
@@ -247,11 +298,11 @@ export class BookmarkBuilder {
         this.config.globalName,
       ),
     );
-    const debugConsoleUrl = options.debug
-      ? new URL("__bmkl/debug", address).toString()
+    const debugConsoleUrl = debugToken
+      ? addDebugToken(new URL("__bmkl/debug", address).toString(), debugToken)
       : undefined;
     const debugBookmarkletUrl =
-      options.debug && debugConsoleUrl
+      debugToken && debugConsoleUrl
         ? toBookmarklet(
             createDebugDevBookmarkletSource({
               id: `${this.loaderDomId()}__debug_dev`,
@@ -356,6 +407,7 @@ export class BookmarkBuilder {
     const paths = this.paths();
     const configFile = this.config.vite?.configFile ?? undefined;
     const entry = resolveFrom(this.config.root, this.config.entry);
+    const outputFileName = toOutputFileName(paths.remoteDir, paths.remoteApp);
 
     const previousBuilderFlag = process.env.BMKL_BUILDER;
     process.env.BMKL_BUILDER = "1";
@@ -373,7 +425,7 @@ export class BookmarkBuilder {
                 entry,
                 name: this.config.globalName,
                 formats: ["iife"],
-                fileName: () => basename(paths.remoteApp),
+                fileName: () => outputFileName,
               },
               minify: this.config.vite?.minify ?? "esbuild",
               outDir: paths.remoteDir,
@@ -443,21 +495,28 @@ export class BookmarkBuilder {
   }
 
   private paths() {
-    const outDir = resolveFrom(this.config.root, this.config.outDir);
+    const outDir = resolveSafeOutputDir(
+      this.config.root,
+      this.config.outDir,
+      "Bookmarklet output directory",
+    );
     const remoteDir = join(outDir, "remote");
     const inlineDir = join(outDir, "inline");
     const metaDir = join(outDir, "meta");
-    const remoteApp = join(
+    const remoteApp = resolveOutputFile(
       remoteDir,
       this.config.remote?.appPath ?? "app.iife.js",
+      "remote.appPath",
     );
-    const remoteLoader = join(
+    const remoteLoader = resolveOutputFile(
       remoteDir,
       this.config.remote?.loaderPath ?? "loader.js",
+      "remote.loaderPath",
     );
-    const remoteManifest = join(
+    const remoteManifest = resolveOutputFile(
       remoteDir,
       this.config.remote?.manifestPath ?? "manifest.json",
+      "remote.manifestPath",
     );
     const bookmarkletFile = this.config.output?.bookmarkletFile ?? "bookmarklet.txt";
 
@@ -469,8 +528,16 @@ export class BookmarkBuilder {
       remoteApp,
       remoteLoader,
       remoteManifest,
-      remoteBookmarklet: join(remoteDir, bookmarkletFile),
-      inlineBookmarklet: join(inlineDir, bookmarkletFile),
+      remoteBookmarklet: resolveOutputFile(
+        remoteDir,
+        bookmarkletFile,
+        "output.bookmarkletFile",
+      ),
+      inlineBookmarklet: resolveOutputFile(
+        inlineDir,
+        bookmarkletFile,
+        "output.bookmarkletFile",
+      ),
       installHtml: join(remoteDir, "install.html"),
       report: join(metaDir, "build-report.json"),
     };
@@ -562,7 +629,9 @@ IP.1 = 127.0.0.1
 IP.2 = ::1
 `;
 
-function createDevCorsOption(target?: string): true | { origin: string } {
+type DevCorsOption = true | { origin: string };
+
+function createDevCorsOption(target?: string): DevCorsOption {
   if (!target) {
     return true;
   }
@@ -572,6 +641,81 @@ function createDevCorsOption(target?: string): true | { origin: string } {
   } catch {
     return true;
   }
+}
+
+function installDebugAuthGuard(
+  server: ViteDevServer,
+  token: string,
+  launcherPath: string,
+): void {
+  server.middlewares.use((req, res, next) => {
+    const url = new URL(req.url ?? "/", "http://bmkl.local");
+    const debugLauncherRequested =
+      url.pathname === launcherPath &&
+      (url.searchParams.get("debug") === "1" ||
+        url.searchParams.get("mode") === "debug");
+    const protectedEndpoint =
+      url.pathname === "/__bmkl/debug" ||
+      url.pathname === "/__bmkl/debug/events" ||
+      debugLauncherRequested;
+
+    if (!protectedEndpoint) {
+      next();
+      return;
+    }
+    if (!hasValidDebugToken(url, token)) {
+      res.statusCode = 404;
+      res.end();
+      return;
+    }
+
+    next();
+  });
+}
+
+function installDevCorsMiddleware(
+  server: ViteDevServer,
+  rule: DevCorsOption,
+): void {
+  server.middlewares.use((req, res, next) => {
+    const requestOrigin = Array.isArray(req.headers.origin)
+      ? req.headers.origin[0]
+      : req.headers.origin;
+    const allowed =
+      rule === true || !requestOrigin || requestOrigin === rule.origin;
+
+    if (allowed) {
+      res.setHeader(
+        "access-control-allow-origin",
+        rule === true ? "*" : rule.origin,
+      );
+      res.setHeader("vary", "Origin");
+    }
+
+    if (req.method !== "OPTIONS") {
+      next();
+      return;
+    }
+    if (!allowed) {
+      res.statusCode = 403;
+      res.end();
+      return;
+    }
+
+    const requestedHeaders = req.headers["access-control-request-headers"];
+    res.statusCode = 204;
+    res.setHeader(
+      "access-control-allow-methods",
+      "GET, HEAD, PUT, PATCH, POST, DELETE, OPTIONS",
+    );
+    res.setHeader(
+      "access-control-allow-headers",
+      Array.isArray(requestedHeaders)
+        ? requestedHeaders.join(", ")
+        : requestedHeaders || "content-type",
+    );
+    res.end();
+  });
 }
 
 async function readJson(path: string): Promise<any | undefined> {

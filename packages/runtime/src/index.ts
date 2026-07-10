@@ -51,6 +51,8 @@ export interface BookmarkletDebugSession {
 }
 
 const DEFAULT_ID = "__bmkl_host__";
+const HOST_ATTRIBUTE = "data-bmkl-host";
+const MODE_ATTRIBUTE = "data-bmkl-mode";
 
 export function installBookmarkletStyles(
   context: BookmarkletAppContext,
@@ -58,9 +60,9 @@ export function installBookmarkletStyles(
   id = "bmkl-app-styles",
 ): HTMLStyleElement {
   const container = context.shadowRoot ?? context.root.ownerDocument.head;
-  const existing = container.querySelector<HTMLStyleElement>(
-    `style[data-bmkl-style="${id}"]`,
-  );
+  const existing = Array.from(
+    container.querySelectorAll<HTMLStyleElement>("style[data-bmkl-style]"),
+  ).find((style) => style.getAttribute("data-bmkl-style") === id);
 
   if (existing) {
     existing.textContent = css;
@@ -81,14 +83,11 @@ export function mountBookmarkletApp(
   const existing = document.getElementById(id);
 
   if (existing) {
+    assertOwnedHost(existing, id);
     if (options.reset === false) {
-      const root = existing.querySelector<HTMLElement>("[data-bmkl-root]");
-      if (root) {
-        return {
-          host: existing,
-          root,
-          destroy: () => existing.remove(),
-        };
+      const context = restoreBookmarkletContext(existing);
+      if (context) {
+        return context;
       }
     }
 
@@ -102,6 +101,7 @@ export function toggleBookmarkletApp(options: MountOptions = {}): boolean {
   const id = options.id ?? DEFAULT_ID;
   const existing = document.getElementById(id);
   if (existing) {
+    assertOwnedHost(existing, id);
     existing.remove();
     return false;
   }
@@ -138,6 +138,8 @@ export function getBookmarkletDebugReport(): BookmarkletDebugReport | undefined 
 function mountShadow(id: string, options: MountOptions): BookmarkletAppContext {
   const host = document.createElement("div");
   host.id = id;
+  host.setAttribute(HOST_ATTRIBUTE, "");
+  host.setAttribute(MODE_ATTRIBUTE, "shadow");
   host.style.position = "fixed";
   host.style.inset = "0";
   host.style.zIndex = String(options.zIndex ?? 2147483647);
@@ -187,6 +189,8 @@ function isDebugSession(value: unknown): value is BookmarkletDebugSession {
 function mountIframe(id: string, options: MountOptions): BookmarkletAppContext {
   const host = document.createElement("div");
   host.id = id;
+  host.setAttribute(HOST_ATTRIBUTE, "");
+  host.setAttribute(MODE_ATTRIBUTE, "iframe");
   host.style.position = "fixed";
   host.style.inset = "0";
   host.style.zIndex = String(options.zIndex ?? 2147483647);
@@ -200,28 +204,74 @@ function mountIframe(id: string, options: MountOptions): BookmarkletAppContext {
   iframe.style.height = "100%";
   iframe.style.border = "0";
   iframe.style.pointerEvents = "auto";
-  iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups");
+  // The app is rendered by the parent runtime, so frame scripts stay disabled.
+  // `allow-same-origin` is required for the parent to access the about:blank
+  // document while forms and explicit popups remain available to app UI.
+  iframe.setAttribute("sandbox", "allow-same-origin allow-forms allow-popups");
   host.appendChild(iframe);
   document.documentElement.appendChild(host);
 
-  const doc = iframe.contentDocument;
-  if (!doc) {
-    throw new Error("Unable to access BMKL iframe document.");
+  try {
+    const doc = iframe.contentDocument;
+    if (!doc) {
+      throw new Error("Unable to access BMKL iframe document.");
+    }
+
+    doc.open();
+    doc.write(
+      '<!doctype html><html><head><meta charset="utf-8" /></head><body><div data-bmkl-root></div></body></html>',
+    );
+    doc.close();
+
+    const root = doc.querySelector<HTMLElement>("[data-bmkl-root]");
+    if (!root) {
+      throw new Error("BMKL iframe root was not created.");
+    }
+
+    return createBookmarkletContext(host, root, { iframe });
+  } catch (error) {
+    host.remove();
+    throw error;
+  }
+}
+
+function assertOwnedHost(host: HTMLElement, id: string): void {
+  if (!host.hasAttribute(HOST_ATTRIBUTE)) {
+    throw new Error(
+      `BMKL cannot replace #${id} because that element is not owned by BMKL. Choose a different mount id.`,
+    );
+  }
+}
+
+function restoreBookmarkletContext(
+  host: HTMLElement,
+): BookmarkletAppContext | undefined {
+  const shadowRoot = host.shadowRoot;
+  const shadowAppRoot = shadowRoot?.querySelector<HTMLElement>("[data-bmkl-root]");
+  if (shadowRoot && shadowAppRoot) {
+    return createBookmarkletContext(host, shadowAppRoot, { shadowRoot });
   }
 
-  doc.open();
-  doc.write(`<!doctype html><html><head><meta charset="utf-8" /></head><body><div data-bmkl-root></div></body></html>`);
-  doc.close();
-
-  const root = doc.querySelector<HTMLElement>("[data-bmkl-root]");
-  if (!root) {
-    throw new Error("BMKL iframe root was not created.");
+  const iframe = host.querySelector<HTMLIFrameElement>("iframe");
+  const iframeRoot = iframe?.contentDocument?.querySelector<HTMLElement>(
+    "[data-bmkl-root]",
+  );
+  if (iframe && iframeRoot) {
+    return createBookmarkletContext(host, iframeRoot, { iframe });
   }
 
+  return undefined;
+}
+
+function createBookmarkletContext(
+  host: HTMLElement,
+  root: HTMLElement,
+  mode: Pick<BookmarkletAppContext, "shadowRoot" | "iframe">,
+): BookmarkletAppContext {
   return {
     host,
-    iframe,
     root,
+    ...mode,
     destroy: () => host.remove(),
   };
 }

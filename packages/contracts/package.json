@@ -1,7 +1,15 @@
 {
   "name": "@bmkl/contracts",
   "version": "0.1.0",
+  "description": "Runtime-validated BMKL contracts for bridge, manifest, action, and debug payloads.",
+  "keywords": ["bookmarklet", "contracts", "typia"],
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -12,8 +20,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "rm -rf dist && ttsc --project tsconfig.json",
-    "clean": "rm -rf dist",
+    "build": "node ../../scripts/clean-package.mjs && ttsc --project tsconfig.json",
+    "clean": "node ../../scripts/clean-package.mjs",
+    "prepack": "pnpm build",
     "typecheck": "ttsc --noEmit"
   },
   "dependencies": {

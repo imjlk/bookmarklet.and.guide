@@ -2,6 +2,7 @@ import type {
   BookmarkletBridge,
   BookmarkletBridgeMessage,
 } from "./bridge.js";
+import type { BmklAction } from "@bmkl/contracts";
 
 export interface BookmarkletActionContext {
   bridge?: BookmarkletBridge;
@@ -9,14 +10,15 @@ export interface BookmarkletActionContext {
   signal?: AbortSignal;
 }
 
-export interface BookmarkletAction<Input = unknown, Output = unknown> {
-  name: string;
-  description?: string;
+export type BookmarkletAction<Input = unknown, Output = unknown> = Omit<
+  BmklAction<Input, Output>,
+  "run"
+> & {
   run(
     input: Input,
     context: BookmarkletActionContext,
   ): Output | Promise<Output>;
-}
+};
 
 export interface BookmarkletActionRegistry {
   clear(): void;
@@ -39,6 +41,7 @@ export function defineBookmarkletAction<const Action extends BookmarkletAction>(
   action: Action,
 ): Action {
   assertActionName(action.name);
+  assertActionValidators(action);
   return action;
 }
 
@@ -60,6 +63,10 @@ export function createBookmarkletActionRegistry(
     register(action) {
       const actionName = action.name;
       assertActionName(actionName);
+      assertActionValidators(action);
+      if (registry.has(actionName)) {
+        throw new Error(`BMKL action is already registered: ${actionName}`);
+      }
       registry.set(actionName, action);
       return () => {
         if (registry.get(actionName) === action) {
@@ -72,7 +79,18 @@ export function createBookmarkletActionRegistry(
       if (!action) {
         throw new Error(`BMKL action not found: ${name}`);
       }
-      return action.run(input, context);
+      const parsedInput = action.assertInput(input);
+      const output = await action.run(parsedInput, context);
+      const validation = action.validateOutput(output);
+      if (!validation.success) {
+        const details = validation.errors
+          .map((error) => `${error.path}: expected ${error.expected}`)
+          .join("; ");
+        throw new Error(
+          `BMKL action returned invalid output: ${name}${details ? ` (${details})` : ""}`,
+        );
+      }
+      return validation.data;
     },
     unregister(name) {
       return registry.delete(name);
@@ -135,6 +153,9 @@ async function runBridgeAction(
       event,
       signal,
     });
+    if (signal?.aborted) {
+      return;
+    }
     bridge.post({
       type: "bmkl:action-result",
       requestId: message.requestId,
@@ -160,6 +181,15 @@ function safePost(bridge: BookmarkletBridge, message: BookmarkletBridgeMessage):
 function assertActionName(name: string): void {
   if (!name) {
     throw new Error("BMKL action requires a non-empty name.");
+  }
+}
+
+function assertActionValidators(action: BookmarkletAction): void {
+  if (typeof action.assertInput !== "function") {
+    throw new Error(`BMKL action requires assertInput(): ${action.name}`);
+  }
+  if (typeof action.validateOutput !== "function") {
+    throw new Error(`BMKL action requires validateOutput(): ${action.name}`);
   }
 }
 

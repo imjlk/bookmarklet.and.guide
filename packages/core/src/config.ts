@@ -49,7 +49,6 @@ export function resolveConfig(
 ): BookmarkletBuildConfig {
   const root = resolve(configRoot, userConfig.root ?? ".");
   const name = userConfig.name;
-  const safeName = toSafeName(name);
 
   return {
     root,
@@ -87,10 +86,6 @@ export function resolveConfig(
       report: userConfig.output?.report ?? true,
     },
   };
-
-  function toSafeName(input: string): string {
-    return input.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  }
 }
 
 function findConfigFile(cwd: string, configFile?: string): string | undefined {
@@ -106,14 +101,22 @@ function findConfigFile(cwd: string, configFile?: string): string | undefined {
 }
 
 async function importConfig(path: string): Promise<BookmarkletUserConfig> {
-  if (path.endsWith(".json")) {
-    const imported = await import(pathToFileURL(path).href, { with: { type: "json" } });
-    return imported.default;
-  }
+  try {
+    if (path.endsWith(".json")) {
+      const imported = await import(pathToFileURL(path).href, {
+        with: { type: "json" },
+      });
+      return imported.default;
+    }
 
-  const jiti = createJiti(pathToFileURL(path).href);
-  const imported = await jiti.import(path, { default: true });
-  return imported as BookmarkletUserConfig;
+    const jiti = createJiti(pathToFileURL(path).href);
+    const imported = await jiti.import(path, { default: true });
+    return imported as BookmarkletUserConfig;
+  } catch (error) {
+    throw new Error(`Failed to load bookmarklet config: ${path}`, {
+      cause: error,
+    });
+  }
 }
 
 function toGlobalName(name: string): string {

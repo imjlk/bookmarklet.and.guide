@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseBmklDebugEventJson } from "@bmkl/contracts";
 import type { ViteDevServer } from "vite";
+import { hasValidDebugToken } from "./debug-token.js";
 
 const DEBUG_EVENT_MAX_BODY_BYTES = 1_000_000;
 const SEEN_EVENT_ID_LIMIT = 400;
@@ -8,6 +9,7 @@ const SEEN_EVENT_ID_RETAIN = 200;
 
 export interface DebugConsoleOptions {
   appName: string;
+  token: string;
 }
 
 export function installDebugConsoleMiddleware(
@@ -20,14 +22,28 @@ export function installDebugConsoleMiddleware(
     const url = new URL(req.url ?? "/", "http://bmkl.local");
 
     if (url.pathname === "/__bmkl/debug") {
+      if (!hasValidDebugToken(url, options.token)) {
+        sendNotFound(res);
+        return;
+      }
       sendHtml(res, createDebugConsoleHtml(options));
       return;
     }
 
     if (url.pathname === "/__bmkl/debug/events") {
+      if (!hasValidDebugToken(url, options.token)) {
+        sendNotFound(res);
+        return;
+      }
       setEventCorsHeaders(res);
       if (req.method === "OPTIONS") {
         res.statusCode = 204;
+        res.end();
+        return;
+      }
+      if (req.method !== "POST") {
+        res.statusCode = 405;
+        res.setHeader("allow", "POST, OPTIONS");
         res.end();
         return;
       }
@@ -122,18 +138,23 @@ function createDebugConsoleHtml(options: DebugConsoleOptions): string {
       const events = [];
       const seenEventIds = new Set();
       const eventsEl = document.getElementById("events");
-	      const sessionEl = document.getElementById("session");
-	      const targetEl = document.getElementById("target");
-	      const statusEl = document.getElementById("status");
-	      const allowedOrigin = new URLSearchParams(location.search).get("origin");
-	
-	      window.addEventListener("message", (event) => {
-	        if (allowedOrigin && event.origin !== allowedOrigin) {
-	          return;
-	        }
-	        const data = event.data;
-	        if (!isDebugEventLike(data)) {
-	          return;
+      const sessionEl = document.getElementById("session");
+      const targetEl = document.getElementById("target");
+      const statusEl = document.getElementById("status");
+      const allowedOrigin = new URLSearchParams(location.search).get("origin");
+      const debugEventsUrl = new URL(location.href);
+      debugEventsUrl.pathname = "/__bmkl/debug/events";
+      debugEventsUrl.hash = "";
+      debugEventsUrl.searchParams.delete("session");
+      debugEventsUrl.searchParams.delete("origin");
+
+      window.addEventListener("message", (event) => {
+        if (allowedOrigin && event.origin !== allowedOrigin) {
+          return;
+        }
+        const data = event.data;
+        if (!isDebugEventLike(data)) {
+          return;
         }
         if (data.eventId && seenEventIds.has(data.eventId)) {
           return;
@@ -146,7 +167,7 @@ function createDebugConsoleHtml(options: DebugConsoleOptions): string {
         targetEl.textContent = data.page?.url || "unknown";
         statusEl.textContent = "receiving";
         render();
-        fetch("/__bmkl/debug/events", {
+        fetch(debugEventsUrl.toString(), {
           method: "POST",
           headers: { "content-type": "text/plain;charset=utf-8" },
           body: JSON.stringify(data),
@@ -215,6 +236,11 @@ function sendHtml(res: ServerResponse, html: string): void {
   res.statusCode = 200;
   res.setHeader("content-type", "text/html; charset=utf-8");
   res.end(html);
+}
+
+function sendNotFound(res: ServerResponse): void {
+  res.statusCode = 404;
+  res.end();
 }
 
 function setEventCorsHeaders(res: ServerResponse): void {

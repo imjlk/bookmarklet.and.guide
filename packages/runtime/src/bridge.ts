@@ -1,26 +1,6 @@
-export type BookmarkletBridgeMessage =
-  | {
-      type: "bmkl:ready";
-      appId: string;
-      frameId?: string;
-      capabilities?: string[];
-    }
-  | {
-      type: "bmkl:run-action";
-      requestId: string;
-      action: string;
-      input: unknown;
-    }
-  | {
-      type: "bmkl:action-result";
-      requestId: string;
-      result: unknown;
-    }
-  | {
-      type: "bmkl:error";
-      requestId?: string;
-      message: string;
-    };
+import type { BmklBridgeMessage } from "@bmkl/contracts";
+
+export type BookmarkletBridgeMessage = BmklBridgeMessage;
 
 export type BookmarkletBridgeOriginRule =
   | string
@@ -32,6 +12,7 @@ export interface BookmarkletBridgeOptions {
   targetOrigin: string;
   receiveWindow?: Window;
   expectedOrigin?: BookmarkletBridgeOriginRule;
+  /** Pass null only to explicitly accept messages from any source window. */
   expectedSource?: MessageEventSource | null;
   timeoutMs?: number;
 }
@@ -51,7 +32,7 @@ export interface BookmarkletBridge {
   readonly targetOrigin: string;
   close(): void;
   onMessage(listener: BookmarkletBridgeMessageListener): () => void;
-  post(message: BookmarkletBridgeMessage, targetOrigin?: string): void;
+  post(message: BookmarkletBridgeMessage): void;
   request(
     action: string,
     input: unknown,
@@ -110,9 +91,9 @@ export function createBookmarkletBridge(
       cleanups.add(cleanup);
       return cleanup;
     },
-    post(message, overrideTargetOrigin) {
+    post(message) {
       assertBookmarkletBridgeMessage(message);
-      options.targetWindow.postMessage(message, overrideTargetOrigin ?? targetOrigin);
+      options.targetWindow.postMessage(message, targetOrigin);
     },
     request(action, input, requestOptions = {}) {
       const requestId = requestOptions.requestId ?? createBridgeRequestId();
@@ -200,6 +181,7 @@ export function isBookmarkletBridgeMessage(
   switch (input.type) {
     case "bmkl:ready":
       return (
+        hasOnlyKeys(input, ["type", "appId", "frameId", "capabilities"]) &&
         typeof input.appId === "string" &&
         input.appId.length > 0 &&
         optionalString(input.frameId) &&
@@ -207,16 +189,27 @@ export function isBookmarkletBridgeMessage(
       );
     case "bmkl:run-action":
       return (
+        hasOnlyKeys(input, ["type", "requestId", "action", "input"]) &&
         typeof input.requestId === "string" &&
         input.requestId.length > 0 &&
         typeof input.action === "string" &&
         input.action.length > 0 &&
-        "input" in input
+        hasOwn(input, "input")
       );
     case "bmkl:action-result":
-      return typeof input.requestId === "string" && input.requestId.length > 0 && "result" in input;
+      return (
+        hasOnlyKeys(input, ["type", "requestId", "result"]) &&
+        typeof input.requestId === "string" &&
+        input.requestId.length > 0 &&
+        hasOwn(input, "result")
+      );
     case "bmkl:error":
-      return optionalString(input.requestId) && typeof input.message === "string" && input.message.length > 0;
+      return (
+        hasOnlyKeys(input, ["type", "requestId", "message"]) &&
+        optionalString(input.requestId) &&
+        typeof input.message === "string" &&
+        input.message.length > 0
+      );
     default:
       return false;
   }
@@ -269,6 +262,18 @@ function isAllowedOrigin(
 
 function isRecord(input: unknown): input is Record<string, unknown> {
   return typeof input === "object" && input !== null;
+}
+
+function hasOwn(input: object, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(input, key);
+}
+
+function hasOnlyKeys(
+  input: Record<string, unknown>,
+  allowedKeys: readonly string[],
+): boolean {
+  const allowed = new Set(allowedKeys);
+  return Object.keys(input).every((key) => allowed.has(key));
 }
 
 function optionalString(input: unknown): boolean {

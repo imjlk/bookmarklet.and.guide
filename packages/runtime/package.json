@@ -1,7 +1,15 @@
 {
   "name": "@bmkl/runtime",
   "version": "0.1.0",
+  "description": "Browser runtime helpers for isolated BMKL mounts, actions, and postMessage bridges.",
+  "keywords": ["bookmarklet", "runtime", "shadow-dom"],
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -13,8 +21,12 @@
   ],
   "scripts": {
     "build": "node ../../scripts/build-package.mjs browser && ttsc --project tsconfig.build.json --emitDeclarationOnly",
-    "clean": "rm -rf dist",
+    "clean": "node ../../scripts/clean-package.mjs",
+    "prepack": "pnpm build",
     "typecheck": "ttsc --noEmit"
+  },
+  "dependencies": {
+    "@bmkl/contracts": "workspace:*"
   },
   "devDependencies": {
     "ttsc": "^0.18.0",

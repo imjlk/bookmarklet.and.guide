@@ -134,6 +134,12 @@ export function createDebugDevBookmarkletSource(
   const globalName = ${globalName};
   const debugConsoleUrl = ${debugConsoleUrl};
   const target = ${target};
+  try {
+    const previousSession = globalThis.__BMKL_DEBUG_SESSION__;
+    if (previousSession && typeof previousSession.__bmklCleanup === "function") {
+      previousSession.__bmklCleanup();
+    }
+  } catch {}
   const sessionId = "bmkl-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
   const startedAt = new Date().toISOString();
   const events = [];
@@ -148,16 +154,22 @@ export function createDebugDevBookmarkletSource(
   let statusEl;
   let eventsEl;
   let collectorBlocked = false;
+  let active = true;
   const debugEventsUrl = (() => {
     const url = new URL(debugConsoleUrl);
     url.pathname = url.pathname.replace(/\\/$/, "") + "/events";
-    url.search = "";
+    url.hash = "";
     return url.toString();
   })();
 
   function openConsole() {
-    const url = debugConsoleUrl + (debugConsoleUrl.includes("?") ? "&" : "?") + "session=" + encodeURIComponent(sessionId) + "&origin=" + encodeURIComponent(location.origin);
-    debugWindow = window.open(url, "bmkl-debug-" + sessionId, "popup,width=980,height=720");
+    if (!active) {
+      return false;
+    }
+    const url = new URL(debugConsoleUrl);
+    url.searchParams.set("session", sessionId);
+    url.searchParams.set("origin", location.origin);
+    debugWindow = window.open(url.toString(), "bmkl-debug-" + sessionId, "popup,width=980,height=720");
     if (debugWindow) {
       setTimeout(() => replayEventsToConsole(), 250);
       setTimeout(() => replayEventsToConsole(), 1000);
@@ -166,6 +178,9 @@ export function createDebugDevBookmarkletSource(
   }
 
   function postToConsole(event) {
+    if (!active) {
+      return;
+    }
     try {
       debugWindow?.postMessage(event, new URL(debugConsoleUrl).origin);
     } catch {}
@@ -205,6 +220,9 @@ export function createDebugDevBookmarkletSource(
   }
 
   function emit(type, message, data) {
+    if (!active) {
+      return;
+    }
     const event = createEvent(type, message, data);
     events.push(event);
     if (events.length > 80) {
@@ -218,6 +236,9 @@ export function createDebugDevBookmarkletSource(
   }
 
   function emitLocal(type, message, data) {
+    if (!active) {
+      return;
+    }
     const event = createEvent(type, message, data);
     events.push(event);
     if (events.length > 80) {
@@ -329,14 +350,14 @@ export function createDebugDevBookmarkletSource(
     }
   }
 
-  function runApp() {
+  async function runApp() {
     const api = globalThis[globalName];
     if (!api || typeof api.run !== "function") {
       emit("app-api-missing", "Global run() API was not found", { globalName });
       return;
     }
     try {
-      api.run();
+      await api.run();
       emit("app-run", "App run() completed");
     } catch (error) {
       emit("app-run-error", error?.message || "App run() failed", { error: errorPayload(error) });
@@ -357,7 +378,7 @@ export function createDebugDevBookmarkletSource(
     s.src = moduleUrl + (moduleUrl.includes("?") ? "&" : "?") + "t=" + Date.now();
     s.onload = () => {
       emit("module-loaded", "Dev module loaded", { moduleUrl });
-      runApp();
+      void runApp();
     };
     s.onerror = () => {
       emit("module-load-error", "Dev module failed to load. Try --https for HTTPS target pages.", { moduleUrl });
@@ -370,7 +391,38 @@ export function createDebugDevBookmarkletSource(
     d.documentElement.appendChild(s);
   }
 
-  globalThis.__BMKL_DEBUG_SESSION__ = {
+  function handleWindowError(event) {
+    emit("window-error", event.message || "Uncaught error", {
+      filename: event.filename,
+      lineno: event.lineno,
+      colno: event.colno,
+      error: errorPayload(event.error),
+    });
+  }
+
+  function handleUnhandledRejection(event) {
+    const reason = event.reason;
+    emit("unhandled-rejection", reason?.message || String(reason), { error: errorPayload(reason) });
+  }
+
+  function cleanup() {
+    if (!active) {
+      return;
+    }
+    active = false;
+    window.removeEventListener("error", handleWindowError);
+    window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+    overlayRoot?.remove();
+    if (globalThis.__BMKL_DEBUG_SESSION__ === debugSession) {
+      try {
+        delete globalThis.__BMKL_DEBUG_SESSION__;
+      } catch {
+        globalThis.__BMKL_DEBUG_SESSION__ = undefined;
+      }
+    }
+  }
+
+  const debugSession = {
     event: emit,
     error(error, phase = "app-error") {
       emit(phase, error?.message || String(error), { error: errorPayload(error) });
@@ -379,20 +431,12 @@ export function createDebugDevBookmarkletSource(
     report() {
       return { sessionId, startedAt, page: page(), events: events.slice() };
     },
+    __bmklCleanup: cleanup,
   };
+  globalThis.__BMKL_DEBUG_SESSION__ = debugSession;
 
-  window.addEventListener("error", (event) => {
-    emit("window-error", event.message || "Uncaught error", {
-      filename: event.filename,
-      lineno: event.lineno,
-      colno: event.colno,
-      error: errorPayload(event.error),
-    });
-  });
-  window.addEventListener("unhandledrejection", (event) => {
-    const reason = event.reason;
-    emit("unhandled-rejection", reason?.message || String(reason), { error: errorPayload(reason) });
-  });
+  window.addEventListener("error", handleWindowError);
+  window.addEventListener("unhandledrejection", handleUnhandledRejection);
 
   installOverlay();
   if (!openConsole()) {

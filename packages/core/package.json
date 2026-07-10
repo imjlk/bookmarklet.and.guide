@@ -1,7 +1,15 @@
 {
   "name": "@bmkl/core",
   "version": "0.1.0",
+  "description": "Core builder and development APIs for Vite-powered BMKL bookmarklets.",
+  "keywords": ["bookmarklet", "builder", "vite"],
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -13,7 +21,10 @@
   ],
   "scripts": {
     "build": "node ../../scripts/build-package.mjs node && ttsc --project tsconfig.build.json --emitDeclarationOnly",
-    "clean": "rm -rf dist",
+    "clean": "node ../../scripts/clean-package.mjs",
+    "prepack": "pnpm build",
+    "pretest": "pnpm --filter @bmkl/contracts build && pnpm build",
+    "test": "node --test test/*.test.mjs",
     "typecheck": "ttsc --noEmit"
   },
   "dependencies": {
@@ -22,7 +33,11 @@
     "vite": "^8.1.4"
   },
   "devDependencies": {
+    "esbuild": "^0.28.1",
     "ttsc": "^0.18.0",
     "typescript": "^7.0.2"
+  },
+  "peerDependencies": {
+    "esbuild": "^0.28.1"
   }
 }
