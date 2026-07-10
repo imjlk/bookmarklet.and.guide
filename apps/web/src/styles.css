@@ -92,6 +92,7 @@ main:focus {
   border-bottom: 1px solid rgba(248, 245, 238, 0.12);
   background: rgba(19, 32, 38, 0.82);
   color: #f8f5ee;
+  -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
 }
 
