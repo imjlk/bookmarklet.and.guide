@@ -7,6 +7,7 @@ import {
   readdir,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
@@ -230,6 +231,34 @@ test("BookmarkBuilder rejects dangerous output paths before deleting files", asy
   });
 });
 
+test("BookmarkBuilder rejects output directories through external symlinks", async (context) => {
+  await withProject(async ({ root, config }) => {
+    const outside = join(root, "..", "outside");
+    const marker = join(outside, "victim", "keep.txt");
+    await mkdir(join(outside, "victim"), { recursive: true });
+    await writeFile(marker, "keep");
+
+    try {
+      await symlink(outside, join(root, "linked-output"), "dir");
+    } catch (error) {
+      if (error.code === "EPERM") {
+        context.skip("Creating directory symlinks requires additional permission.");
+        return;
+      }
+      throw error;
+    }
+
+    await assert.rejects(
+      new BookmarkBuilder({
+        ...config,
+        outDir: "linked-output/victim",
+      }).build(),
+      /must stay inside/,
+    );
+    assert.equal(await readFile(marker, "utf8"), "keep");
+  });
+});
+
 test("BookmarkBuilder rejects artifact paths that escape their output directory", async () => {
   await withProject(async ({ root, config }) => {
     const outputMarker = join(root, "dist", "keep.txt");
@@ -249,6 +278,17 @@ test("BookmarkBuilder rejects artifact paths that escape their output directory"
       /remote\.loaderPath must stay inside/,
     );
     assert.equal(await readFile(outputMarker, "utf8"), "keep");
+
+    await assert.rejects(
+      new BookmarkBuilder({
+        ...config,
+        remote: {
+          ...config.remote,
+          appPath: "assets/",
+        },
+      }).build(),
+      /must resolve to a file, not a directory/,
+    );
   });
 });
 

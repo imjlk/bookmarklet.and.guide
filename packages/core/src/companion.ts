@@ -8,6 +8,7 @@ import type {
 } from "./types.js";
 import { addDebugToken, loadOrCreateDebugToken } from "./debug-token.js";
 import {
+  assertOutputDirFilesystemBoundary,
   ensureDir,
   resolveFrom,
   resolveOutputFile,
@@ -43,6 +44,11 @@ export async function buildCompanionExtension(
   );
   const targetMatch = target.matchPattern;
 
+  await assertOutputDirFilesystemBoundary(
+    config.root,
+    outDir,
+    "Companion output directory",
+  );
   await rm(outDir, { recursive: true, force: true });
   await ensureDir(outDir);
   const tempDir = await mkdtemp(join(outDir, ".bmkl-companion-"));

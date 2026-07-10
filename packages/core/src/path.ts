@@ -1,4 +1,4 @@
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import {
   dirname,
@@ -46,6 +46,9 @@ export function resolveOutputFile(
   if (isAbsolute(path)) {
     throw new Error(`${label} must be relative to its output directory: ${path}`);
   }
+  if (/[\\/]$/.test(path.trim())) {
+    throw new Error(`${label} must resolve to a file, not a directory: ${path}`);
+  }
 
   const normalizedOutputRoot = resolve(outputRoot);
   const outputPath = resolve(normalizedOutputRoot, path);
@@ -57,6 +60,50 @@ export function resolveOutputFile(
 
   assertPathInside(normalizedOutputRoot, outputPath, label);
   return outputPath;
+}
+
+export async function assertOutputDirFilesystemBoundary(
+  projectRoot: string,
+  outputDir: string,
+  label: string,
+): Promise<void> {
+  const normalizedProjectRoot = resolve(projectRoot);
+  const normalizedOutputDir = resolve(outputDir);
+  const realProjectRoot = await realpath(normalizedProjectRoot);
+  let existingAncestor = normalizedOutputDir;
+
+  while (true) {
+    try {
+      const info = await lstat(existingAncestor);
+      if (
+        existingAncestor === normalizedOutputDir &&
+        info.isSymbolicLink()
+      ) {
+        throw new Error(`${label} must not be a symbolic link: ${outputDir}`);
+      }
+
+      const [realAncestor, realAncestorInfo] = await Promise.all([
+        realpath(existingAncestor),
+        stat(existingAncestor),
+      ]);
+      if (!realAncestorInfo.isDirectory()) {
+        throw new Error(
+          `${label} has a non-directory ancestor: ${existingAncestor}`,
+        );
+      }
+      assertPathInside(realProjectRoot, realAncestor, label);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+      const parent = dirname(existingAncestor);
+      if (parent === existingAncestor) {
+        throw new Error(`${label} has no existing filesystem ancestor: ${outputDir}`);
+      }
+      existingAncestor = parent;
+    }
+  }
 }
 
 export function toOutputFileName(outputRoot: string, outputPath: string): string {

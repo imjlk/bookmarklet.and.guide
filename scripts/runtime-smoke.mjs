@@ -41,12 +41,27 @@ function testBridgeContractParity() {
     action: "inspect",
   };
   const extraProperty = { ...valid, unexpected: true };
+  const validNullInput = { ...valid, input: null };
+  const validError = {
+    type: "bmkl:error",
+    requestId: "request-2",
+    message: "failed",
+  };
+  const invalidCases = [
+    missingInput,
+    extraProperty,
+    { ...valid, requestId: "" },
+    { ...valid, action: 42 },
+    { type: "bmkl:action-result", requestId: "request-3" },
+  ];
 
-  assert.equal(isBookmarkletBridgeMessage(valid), true);
-  assert.equal(isBmklBridgeMessage(valid), true);
-  assert.doesNotThrow(() => assertBmklBridgeMessage(valid));
+  for (const message of [valid, validNullInput, validError]) {
+    assert.equal(isBookmarkletBridgeMessage(message), true);
+    assert.equal(isBmklBridgeMessage(message), true);
+    assert.doesNotThrow(() => assertBmklBridgeMessage(message));
+  }
 
-  for (const invalid of [missingInput, extraProperty]) {
+  for (const invalid of invalidCases) {
     assert.equal(isBookmarkletBridgeMessage(invalid), false);
     assert.equal(isBmklBridgeMessage(invalid), false);
     assert.equal(validateBmklBridgeMessage(invalid).success, false);
@@ -92,6 +107,28 @@ async function testBridgeLifecycle() {
   });
 
   assert.equal(await bridge.request("echo", "bmkl"), "handled:bmkl");
+
+  for (const spoof of [
+    { origin: "https://evil.example", source: targetWindow },
+    { origin: "https://target.example", source: {} },
+  ]) {
+    targetWindow.postMessage = (message) => {
+      queueMicrotask(() => {
+        receiveWindow.emit({
+          data: {
+            type: "bmkl:action-result",
+            requestId: message.requestId,
+            result: "spoofed",
+          },
+          ...spoof,
+        });
+      });
+    };
+    await assert.rejects(
+      bridge.request("spoof", undefined, { timeoutMs: 20 }),
+      /timed out/,
+    );
+  }
 
   const controller = new AbortController();
   const aborted = bridge.request("never", undefined, {
@@ -160,6 +197,7 @@ async function testActionValidation() {
 async function testAbortedActionDoesNotPost() {
   let onMessage;
   let finishAction;
+  let failAction;
   const posts = [];
   const bridge = {
     close() {},
@@ -178,6 +216,20 @@ async function testAbortedActionDoesNotPost() {
     targetOrigin: "https://target.example",
   };
   const registry = createBookmarkletActionRegistry([
+    {
+      name: "failing",
+      assertInput(input) {
+        return input;
+      },
+      validateOutput(output) {
+        return { success: true, data: output };
+      },
+      run() {
+        return new Promise((_, reject) => {
+          failAction = reject;
+        });
+      },
+    },
     {
       name: "slow",
       assertInput(input) {
@@ -212,80 +264,110 @@ async function testAbortedActionDoesNotPost() {
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.deepEqual(posts, []);
+
+  const rejectingController = new AbortController();
+  connectBookmarkletActionBridge(bridge, registry, {
+    signal: rejectingController.signal,
+  });
+  onMessage(
+    {
+      type: "bmkl:run-action",
+      requestId: "failing-1",
+      action: "failing",
+      input: undefined,
+    },
+    {},
+  );
+  rejectingController.abort();
+  failAction(new Error("aborted failure"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(posts, []);
 }
 
 async function testBrowserMounts() {
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage();
+    page.setDefaultTimeout(10_000);
     await page.goto("data:text/html,<main id='target'>target page</main>");
-    await page.evaluate(async (moduleUrl) => {
-      globalThis.__BMKL_RUNTIME__ = await import(moduleUrl);
-    }, runtimeModuleUrl);
+    await withTimeout(
+      page.evaluate(async (moduleUrl) => {
+        globalThis.__BMKL_RUNTIME__ = await import(moduleUrl);
+      }, runtimeModuleUrl),
+      10_000,
+      "runtime module import",
+    );
 
-    const result = await page.evaluate(() => {
-      const runtime = globalThis.__BMKL_RUNTIME__;
+    const result = await withTimeout(
+      page.evaluate(() => {
+        const runtime = globalThis.__BMKL_RUNTIME__;
 
-      const pageOwned = document.createElement("div");
-      pageOwned.id = "page-owned";
-      document.body.appendChild(pageOwned);
-      let collisionMessage = "";
-      try {
-        runtime.mountBookmarkletApp({ id: "page-owned" });
-      } catch (error) {
-        collisionMessage = String(error);
-      }
+        const pageOwned = document.createElement("div");
+        pageOwned.id = "page-owned";
+        document.body.appendChild(pageOwned);
+        let collisionMessage = "";
+        try {
+          runtime.mountBookmarkletApp({ id: "page-owned" });
+        } catch (error) {
+          collisionMessage = String(error);
+        }
 
-      const shadow = runtime.mountBookmarkletApp({ id: "shadow-app" });
-      const restoredShadow = runtime.mountBookmarkletApp({
-        id: "shadow-app",
-        reset: false,
-      });
-      const firstStyle = runtime.installBookmarkletStyles(
-        shadow,
-        "body { color: red; }",
-        'unsafe\"] selector',
-      );
-      const secondStyle = runtime.installBookmarkletStyles(
-        shadow,
-        "body { color: blue; }",
-        'unsafe\"] selector',
-      );
+        const shadow = runtime.mountBookmarkletApp({ id: "shadow-app" });
+        const restoredShadow = runtime.mountBookmarkletApp({
+          id: "shadow-app",
+          reset: false,
+        });
+        const firstStyle = runtime.installBookmarkletStyles(
+          shadow,
+          "body { color: red; }",
+          'unsafe\"] selector',
+        );
+        const secondStyle = runtime.installBookmarkletStyles(
+          shadow,
+          "body { color: blue; }",
+          'unsafe\"] selector',
+        );
 
-      const iframe = runtime.mountBookmarkletApp({
-        id: "iframe-app",
-        mode: "iframe",
-      });
-      const restoredIframe = runtime.mountBookmarkletApp({
-        id: "iframe-app",
-        mode: "iframe",
-        reset: false,
-      });
-      const iframeSandbox = iframe.iframe?.getAttribute("sandbox") ?? "";
+        const iframe = runtime.mountBookmarkletApp({
+          id: "iframe-app",
+          mode: "iframe",
+        });
+        const restoredIframe = runtime.mountBookmarkletApp({
+          id: "iframe-app",
+          mode: "iframe",
+          reset: false,
+        });
+        const iframeSandbox = iframe.iframe?.getAttribute("sandbox") ?? "";
 
-      const output = {
-        pageElementRemains: document.getElementById("page-owned") === pageOwned,
-        collisionMessage,
-        shadowReused:
-          shadow.host === restoredShadow.host && shadow.root === restoredShadow.root,
-        styleReused:
-          firstStyle === secondStyle && secondStyle.textContent?.includes("blue"),
-        iframeReused:
-          iframe.host === restoredIframe.host && iframe.root === restoredIframe.root,
-        iframeConnected: iframe.host.isConnected,
-        iframeDocumentAvailable: Boolean(iframe.iframe?.contentDocument),
-        iframeSandbox,
-      };
+        const output = {
+          pageElementRemains: document.getElementById("page-owned") === pageOwned,
+          collisionMessage,
+          shadowReused:
+            shadow.host === restoredShadow.host &&
+            shadow.root === restoredShadow.root,
+          styleReused:
+            firstStyle === secondStyle && secondStyle.textContent?.includes("blue"),
+          iframeReused:
+            iframe.host === restoredIframe.host &&
+            iframe.root === restoredIframe.root,
+          iframeConnected: iframe.host.isConnected,
+          iframeDocumentAvailable: Boolean(iframe.iframe?.contentDocument),
+          iframeSandbox,
+        };
 
-      shadow.destroy();
-      iframe.destroy();
-      return {
-        ...output,
-        mountsDestroyed:
-          !document.getElementById("shadow-app") &&
-          !document.getElementById("iframe-app"),
-      };
-    });
+        shadow.destroy();
+        iframe.destroy();
+        return {
+          ...output,
+          mountsDestroyed:
+            !document.getElementById("shadow-app") &&
+            !document.getElementById("iframe-app"),
+        };
+      }),
+      10_000,
+      "runtime browser assertions",
+    );
 
     assert.equal(result.pageElementRemains, true);
     assert.match(result.collisionMessage, /not owned by BMKL/);
@@ -326,4 +408,21 @@ function createMockWindow() {
     },
     setTimeout,
   };
+}
+
+async function withTimeout(promise, timeoutMs, label) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Timed out waiting for ${label}.`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

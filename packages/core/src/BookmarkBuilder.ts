@@ -30,6 +30,7 @@ import {
 } from "./loader.js";
 import { createManifest } from "./manifest.js";
 import {
+  assertOutputDirFilesystemBoundary,
   ensureDir,
   joinUrl,
   resolveFrom,
@@ -64,6 +65,11 @@ export class BookmarkBuilder {
     await this.prepareTtsc(warnings);
     await this.typecheck(warnings);
 
+    await assertOutputDirFilesystemBoundary(
+      this.config.root,
+      paths.outDir,
+      "Bookmarklet output directory",
+    );
     await rm(paths.outDir, { force: true, recursive: true });
     await ensureDir(paths.remoteDir);
     await ensureDir(paths.inlineDir);

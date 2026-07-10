@@ -162,6 +162,9 @@ async function runBridgeAction(
       result,
     });
   } catch (error) {
+    if (signal?.aborted) {
+      return;
+    }
     safePost(bridge, {
       type: "bmkl:error",
       requestId: message.requestId,
