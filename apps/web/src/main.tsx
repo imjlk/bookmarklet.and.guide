@@ -2,14 +2,19 @@ import {
   ArrowRight,
   BookOpen,
   Boxes,
+  Check,
   Cloud,
+  Copy,
+  ExternalLink,
   FileCode2,
   ListChecks,
+  Menu,
   PackageCheck,
   Play,
   ScrollText,
   ShieldCheck,
   Terminal,
+  X,
 } from "lucide-solid";
 import { createResource, createSignal, For, onCleanup, onMount } from "solid-js";
 import { render } from "solid-js/web";
@@ -23,6 +28,12 @@ interface ProjectMeta {
   packages: string[];
 }
 
+const defaultCreateCommand =
+  "npm create bmkl@latest my-agent -- --template lit-shadow";
+
+const cloudflarePagesGuideUrl =
+  "https://developers.cloudflare.com/pages/get-started/direct-upload/";
+
 const fallbackMeta: ProjectMeta = {
   name: "BMKL",
   cli: "bmkl",
@@ -33,6 +44,7 @@ const fallbackMeta: ProjectMeta = {
     "@bmkl/core",
     "@bmkl/contracts",
     "@bmkl/runtime",
+    "@bmkl/templates",
     "@bmkl/vite",
     "@bmkl/cli",
   ],
@@ -42,7 +54,7 @@ const workflow = [
   {
     icon: Terminal,
     title: "Create",
-    command: "npm create bmkl@latest my-agent -- --template lit-shadow",
+    command: defaultCreateCommand,
     body: "Start from a Vite template for Lit, ttsc plugins, Solid, TanStack Query, React, or dependency-light TypeScript.",
   },
   {
@@ -64,6 +76,7 @@ const packages = [
   ["@bmkl/core", "BookmarkBuilder, loader, debug console, companion extension builder"],
   ["@bmkl/contracts", "typia-backed contracts for debug events, manifests, actions, and bridge messages"],
   ["@bmkl/runtime", "Shadow DOM, iframe, debug, action, and postMessage bridge helpers"],
+  ["@bmkl/templates", "Versioned metadata and six framework-ready project templates"],
   ["@bmkl/vite", "Vite IIFE defaults plus optional ttsc unplugin bridge"],
   ["@bmkl/cli", "bmkl and bmk commands for dev, build, inspect, doctor"],
 ];
@@ -262,96 +275,199 @@ const cspMatrix = [
   ],
 ] as const;
 
+interface CopyCommandButtonProps {
+  id: string;
+  command: string;
+  copied: boolean;
+  onCopy(id: string, command: string): void | Promise<void>;
+}
+
+function CopyCommandButton(props: CopyCommandButtonProps) {
+  return (
+    <button
+      class="copy-command"
+      type="button"
+      aria-label={`${props.copied ? "Copied" : "Copy"} command: ${props.command}`}
+      onClick={() => props.onCopy(props.id, props.command)}
+    >
+      {props.copied ? <Check size={16} /> : <Copy size={16} />}
+      <span>{props.copied ? "Copied" : "Copy"}</span>
+    </button>
+  );
+}
+
 function App() {
   const [meta] = createResource<ProjectMeta>(async () => {
     try {
       const response = await fetch("/api/project");
-      if (response.ok) {
-        return await response.json();
+      if (!response.ok) {
+        throw new Error(`Project metadata request failed with ${response.status}`);
       }
-    } catch {
+
+      if (!response.headers.get("content-type")?.includes("application/json")) {
+        throw new Error("Project metadata response was not JSON");
+      }
+
+      const projectMeta: unknown = await response.json();
+      if (!isProjectMeta(projectMeta)) {
+        throw new Error("Project metadata response had an unexpected shape");
+      }
+
+      return projectMeta;
+    } catch (error) {
+      console.warn(
+        "[BMKL] Using local project metadata fallback:",
+        error instanceof Error ? error.message : String(error),
+      );
       return fallbackMeta;
     }
-    return fallbackMeta;
   });
-  const [activeSection, setActiveSection] = createSignal("workflow");
+  const [activeSection, setActiveSection] = createSignal<string | null>(null);
+  const [navOpen, setNavOpen] = createSignal(false);
+  const [copiedCommand, setCopiedCommand] = createSignal<string | null>(null);
+  const [copyAnnouncement, setCopyAnnouncement] = createSignal("");
+  let copyTimer: number | undefined;
+  let navToggleButton: HTMLButtonElement | undefined;
+
+  const copyCommand = async (id: string, command: string) => {
+    try {
+      await writeClipboard(command);
+      setCopiedCommand(id);
+      setCopyAnnouncement(`Copied command: ${command}`);
+    } catch {
+      setCopiedCommand(null);
+      setCopyAnnouncement("Could not copy the command. Select and copy it manually.");
+    }
+
+    window.clearTimeout(copyTimer);
+    copyTimer = window.setTimeout(() => {
+      setCopiedCommand(null);
+      setCopyAnnouncement("");
+    }, 2400);
+  };
 
   onMount(() => {
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && navOpen()) {
+        setNavOpen(false);
+        navToggleButton?.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeydown);
+
     const revealElements = Array.from(
       document.querySelectorAll<HTMLElement>("[data-reveal]"),
     );
+    let revealObserver: IntersectionObserver | undefined;
+    let sectionObserver: IntersectionObserver | undefined;
+    let initialScrollFrame: number | undefined;
 
     if (!("IntersectionObserver" in window)) {
       revealElements.forEach((element) => element.setAttribute("data-reveal", "true"));
-      return;
+    } else {
+      revealObserver = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              entry.target.setAttribute("data-reveal", "true");
+              revealObserver?.unobserve(entry.target);
+            }
+          }
+        },
+        { threshold: 0.18 },
+      );
+
+      revealElements.forEach((element) => revealObserver?.observe(element));
+
+      const sectionRatios = new Map<string, number>();
+      sectionObserver = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            sectionRatios.set(
+              entry.target.id,
+              entry.isIntersecting ? entry.intersectionRatio : 0,
+            );
+          }
+
+          const visible = [...sectionRatios.entries()]
+            .filter(([, ratio]) => ratio > 0)
+            .sort((left, right) => right[1] - left[1])[0];
+          setActiveSection(visible?.[0] ?? null);
+        },
+        {
+          rootMargin: "-20% 0px -70% 0px",
+          threshold: [0, 0.01],
+        },
+      );
+
+      navItems.forEach(([id]) => {
+        const section = document.getElementById(id);
+        if (section) {
+          sectionObserver?.observe(section);
+        }
+      });
     }
 
-    const revealObserver = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            entry.target.setAttribute("data-reveal", "true");
-          }
-        }
-      },
-      { threshold: 0.18 },
-    );
-
-    revealElements.forEach((element) => revealObserver.observe(element));
-
-    const sectionObserver = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
-
-        if (visible?.target.id) {
-          setActiveSection(visible.target.id);
-        }
-      },
-      {
-        rootMargin: "-20% 0px -55% 0px",
-        threshold: [0.18, 0.36, 0.6],
-      },
-    );
-
-    navItems.forEach(([id]) => {
-      const section = document.getElementById(id);
-      if (section) {
-        sectionObserver.observe(section);
-      }
-    });
+    const initialHash = decodeURIComponent(window.location.hash.slice(1));
+    if (initialHash) {
+      initialScrollFrame = window.requestAnimationFrame(() => {
+        document.getElementById(initialHash)?.scrollIntoView();
+      });
+    }
 
     onCleanup(() => {
-      revealObserver.disconnect();
-      sectionObserver.disconnect();
+      document.removeEventListener("keydown", handleKeydown);
+      window.cancelAnimationFrame(initialScrollFrame ?? 0);
+      revealObserver?.disconnect();
+      sectionObserver?.disconnect();
     });
   });
 
+  onCleanup(() => window.clearTimeout(copyTimer));
+
   return (
     <>
-      <header class="site-header">
+      <a class="skip-link" href="#main-content">
+        Skip to content
+      </a>
+      <header class="site-header" data-nav-open={navOpen() ? "true" : "false"}>
         <a class="brand" href="#top" aria-label="BMKL home">
           <Boxes size={22} />
           <span>BMKL</span>
         </a>
-        <nav aria-label="Primary">
-          <For each={navItems}>
-            {([id, label]) => (
-              <a
-                href={`#${id}`}
-                classList={{ active: activeSection() === id }}
-                aria-current={activeSection() === id ? "true" : undefined}
-              >
-                {label}
-              </a>
-            )}
-          </For>
+        <button
+          ref={navToggleButton}
+          class="nav-toggle"
+          type="button"
+          aria-controls="primary-navigation"
+          aria-expanded={navOpen()}
+          aria-label={`${navOpen() ? "Close" : "Open"} navigation`}
+          onClick={() => setNavOpen((open) => !open)}
+        >
+          {navOpen() ? <X size={22} /> : <Menu size={22} />}
+        </button>
+        <nav id="primary-navigation" aria-label="Primary">
+          <ul>
+            <For each={navItems}>
+              {([id, label]) => (
+                <li>
+                  <a
+                    href={`#${id}`}
+                    classList={{ active: activeSection() === id }}
+                    aria-current={activeSection() === id ? "location" : undefined}
+                    onClick={() => setNavOpen(false)}
+                  >
+                    {label}
+                  </a>
+                </li>
+              )}
+            </For>
+          </ul>
         </nav>
       </header>
 
-      <main id="top">
-        <section class="hero">
+      <main id="main-content" tabIndex={-1}>
+        <section id="top" class="hero" aria-labelledby="hero-heading">
           <div class="hero-visual" aria-hidden="true">
             <div class="browser-shell">
               <div class="browser-bar">
@@ -390,17 +506,29 @@ function App() {
 
           <div class="hero-copy">
             <p class="eyebrow">Vite-first bookmarklet framework</p>
-            <h1>BMKL</h1>
+            <h1 id="hero-heading">BMKL</h1>
             <p class="lede">
               Build bookmarklets as remote-updatable in-page apps with Vite,
               ttsc checks, and a typed runtime surface.
             </p>
             <div class="hero-actions">
-              <a class="primary-action" href="#cli">
-                <Terminal size={18} />
-                <span>Start with create</span>
+              <button
+                class="primary-action"
+                type="button"
+                onClick={() => copyCommand("hero-create", defaultCreateCommand)}
+              >
+                {copiedCommand() === "hero-create" ? (
+                  <Check size={18} />
+                ) : (
+                  <Copy size={18} />
+                )}
+                <span>
+                  {copiedCommand() === "hero-create"
+                    ? "Create command copied"
+                    : "Copy create command"}
+                </span>
                 <ArrowRight size={18} />
-              </a>
+              </button>
               <a class="secondary-action" href="#packages">
                 <FileCode2 size={18} />
                 <span>View packages</span>
@@ -409,21 +537,28 @@ function App() {
           </div>
         </section>
 
-        <section id="workflow" class="workflow" data-reveal>
+        <section
+          id="workflow"
+          class="workflow"
+          aria-labelledby="workflow-heading"
+          data-reveal
+        >
           <div class="section-label">Workflow</div>
           <div class="section-heading">
-            <h2>One create path, one build path, six Vite templates.</h2>
+            <h2 id="workflow-heading">
+              One create path, one build path, six Vite templates.
+            </h2>
             <p>
               Start with the package-manager create command, then use bmkl
               inside the generated project for dev, build, inspect, and doctor.
             </p>
           </div>
-          <div class="steps">
+          <ol class="steps">
             <For each={workflow}>
               {(item) => {
                 const Icon = item.icon;
                 return (
-                  <article class="step">
+                  <li class="step">
                     <div class="step-icon">
                       <Icon size={20} />
                     </div>
@@ -432,27 +567,32 @@ function App() {
                       <code>{item.command}</code>
                       <p>{item.body}</p>
                     </div>
-                  </article>
+                  </li>
                 );
               }}
             </For>
-          </div>
+          </ol>
         </section>
 
-        <section id="templates" class="templates" data-reveal>
+        <section
+          id="templates"
+          class="templates"
+          aria-labelledby="templates-heading"
+          data-reveal
+        >
           <div class="section-label">Templates</div>
           <div class="section-heading">
-            <h2>Pick the smallest shape that matches the job.</h2>
+            <h2 id="templates-heading">Pick the smallest shape that matches the job.</h2>
             <p>
               BMKL keeps Query, React, and framework dependencies opt-in so
               ordinary bookmarklets stay lean while data-heavy tools still have
               a ready starter.
             </p>
           </div>
-          <div class="template-list">
+          <ul class="template-list">
             <For each={templates}>
               {(item) => (
-                <article class="template-row">
+                <li class="template-row">
                   <div class="template-meta">
                     <span>{item.badge}</span>
                     <h3>{item.title}</h3>
@@ -462,17 +602,22 @@ function App() {
                     <p>{item.body}</p>
                   </div>
                   <strong>{item.name}</strong>
-                </article>
+                </li>
               )}
             </For>
-          </div>
+          </ul>
         </section>
 
-        <section id="cli" class="cli-section" data-reveal>
+        <section
+          id="cli"
+          class="cli-section"
+          aria-labelledby="cli-heading"
+          data-reveal
+        >
           <div class="section-label">CLI</div>
           <div class="cli-layout">
             <div class="cli-copy">
-              <h2>Create with npm. Work with bmkl.</h2>
+              <h2 id="cli-heading">Create with npm. Work with bmkl.</h2>
               <p>
                 Project generation follows the JavaScript create convention.
                 The generated app then carries bmkl scripts for local dev,
@@ -498,16 +643,24 @@ function App() {
               </div>
             </div>
 
-            <div class="command-list" aria-label="BMKL CLI commands">
+            <ul class="command-list" aria-label="BMKL CLI commands">
               <For each={cliCommands}>
-                {(item) => (
-                  <article class="command-row">
-                    <code>{item.command}</code>
+                {(item, index) => (
+                  <li class="command-row">
+                    <div class="command-value">
+                      <code>{item.command}</code>
+                      <CopyCommandButton
+                        id={`cli-${index()}`}
+                        command={item.command}
+                        copied={copiedCommand() === `cli-${index()}`}
+                        onCopy={copyCommand}
+                      />
+                    </div>
                     <p>{item.detail}</p>
-                  </article>
+                  </li>
                 )}
               </For>
-            </div>
+            </ul>
           </div>
 
           <div class="artifact-strip" aria-label="Generated artifacts">
@@ -519,11 +672,18 @@ function App() {
           </div>
         </section>
 
-        <section id="debug" class="debug-section" data-reveal>
+        <section
+          id="debug"
+          class="debug-section"
+          aria-labelledby="debug-heading"
+          data-reveal
+        >
           <div class="section-label">Debug</div>
           <div class="debug-grid">
             <div class="debug-copy">
-              <h2>Test on the real site without losing the failure trail.</h2>
+              <h2 id="debug-heading">
+                Test on the real site without losing the failure trail.
+              </h2>
               <p>
                 The debug bookmarklet sends localhost events directly, mirrors
                 them to a console window, and leaves an in-page overlay behind
@@ -538,31 +698,45 @@ function App() {
                 <code>Debug bookmarklet: javascript:(...)</code>
               </div>
             </div>
-            <div class="debug-flow" aria-label="Target-site debug flow">
+            <ol class="debug-flow" aria-label="Target-site debug flow">
               <For each={debugFlow}>
                 {([step, title, body]) => (
-                  <article>
+                  <li>
                     <span>{step}</span>
                     <div>
                       <h3>{title}</h3>
                       <p>{body}</p>
                     </div>
-                  </article>
+                  </li>
                 )}
               </For>
-            </div>
+            </ol>
           </div>
-          <div class="csp-matrix" aria-label="CSP compatibility matrix">
-            <For each={cspMatrix}>
-              {([policy, status, body]) => (
-                <article>
-                  <span>{policy}</span>
-                  <strong>{status}</strong>
-                  <p>{body}</p>
-                </article>
-              )}
-            </For>
-          </div>
+          <table class="csp-matrix">
+            <caption class="sr-only">CSP compatibility matrix</caption>
+            <thead class="sr-only">
+              <tr>
+                <th scope="col">Policy</th>
+                <th scope="col">Expected result</th>
+                <th scope="col">Behavior</th>
+              </tr>
+            </thead>
+            <tbody>
+              <For each={cspMatrix}>
+                {([policy, status, body]) => (
+                  <tr>
+                    <th scope="row">{policy}</th>
+                    <td>
+                      <strong>{status}</strong>
+                    </td>
+                    <td>
+                      <p>{body}</p>
+                    </td>
+                  </tr>
+                )}
+              </For>
+            </tbody>
+          </table>
           <div class="companion-panel" aria-label="Companion extension test flow">
             <div>
               <span>Companion Mode</span>
@@ -573,27 +747,32 @@ function App() {
                 policies do not stop the development run.
               </p>
             </div>
-            <div class="companion-flow">
+            <ol class="companion-flow">
               <For each={companionFlow}>
                 {([step, title, body]) => (
-                  <article>
+                  <li>
                     <span>{step}</span>
                     <div>
                       <h4>{title}</h4>
                       <p>{body}</p>
                     </div>
-                  </article>
+                  </li>
                 )}
               </For>
-            </div>
+            </ol>
           </div>
         </section>
 
-        <section id="packages" class="packages" data-reveal>
+        <section
+          id="packages"
+          class="packages"
+          aria-labelledby="packages-heading"
+          data-reveal
+        >
           <div class="section-label">Packages</div>
           <div class="package-grid">
             <div class="package-lead">
-              <h2>Vite builds fast. ttsc keeps watch.</h2>
+              <h2 id="packages-heading">Vite builds fast. ttsc keeps watch.</h2>
               <p>
                 BMKL keeps bundling, type checks, generated contracts, action
                 bridge helpers, optional compiler plugins, graph output, and
@@ -604,27 +783,42 @@ function App() {
                 <span>{meta()?.runtime ?? "Cloudflare Pages advanced mode"}</span>
               </div>
             </div>
-            <div class="package-list">
+            <ul class="package-list">
               <For each={packages}>
                 {([name, body]) => (
-                  <article>
+                  <li>
                     <h3>{name}</h3>
                     <p>{body}</p>
-                  </article>
+                  </li>
                 )}
               </For>
-            </div>
+            </ul>
           </div>
         </section>
 
-        <section id="deploy" class="deploy" data-reveal>
+        <section
+          id="deploy"
+          class="deploy"
+          aria-labelledby="deploy-heading"
+          data-reveal
+        >
           <div>
             <div class="section-label">Deploy</div>
-            <h2>Ready for Cloudflare Pages.</h2>
+            <h2 id="deploy-heading">Ready for Cloudflare Pages.</h2>
             <p>
               The site ships with advanced mode so `/api/project` can run at
               the edge while static assets remain cache-friendly.
             </p>
+            <a
+              class="deploy-action"
+              href={cloudflarePagesGuideUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Read the Cloudflare Pages deployment guide (opens in a new tab)"
+            >
+              <span>Read the deployment guide</span>
+              <ExternalLink size={18} />
+            </a>
           </div>
           <div class="deploy-terminal">
             <div>
@@ -637,8 +831,54 @@ function App() {
           </div>
         </section>
       </main>
+      <div class="sr-only" role="status" aria-live="polite">
+        {copyAnnouncement()}
+      </div>
     </>
   );
 }
 
-render(() => <App />, document.getElementById("root")!);
+async function writeClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+
+  if (!copied) {
+    throw new Error("Clipboard copy failed");
+  }
+}
+
+function isProjectMeta(value: unknown): value is ProjectMeta {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.name === "string" &&
+    typeof candidate.cli === "string" &&
+    typeof candidate.version === "string" &&
+    typeof candidate.runtime === "string" &&
+    Array.isArray(candidate.packages) &&
+    candidate.packages.every((item) => typeof item === "string")
+  );
+}
+
+const root = document.getElementById("root");
+if (!(root instanceof HTMLElement)) {
+  throw new Error("BMKL could not find the #root mount element");
+}
+
+document.documentElement.classList.add("js");
+render(() => <App />, root);
