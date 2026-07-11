@@ -1,63 +1,262 @@
+/* Shared verbatim so every starter keeps the same tokens and markup variants. */
+:host {
+  color-scheme: light dark;
+  --bmkl-accent: #0f766e;
+  --bmkl-accent-strong: #115e59;
+  --bmkl-border: rgba(20, 28, 35, 0.16);
+  --bmkl-border: color-mix(in srgb, CanvasText 16%, transparent);
+  --bmkl-muted: GrayText;
+  --bmkl-muted: color-mix(in srgb, CanvasText 64%, transparent);
+  --bmkl-offset: 20px;
+  --bmkl-radius: 14px;
+  --bmkl-surface: #ffffff;
+  --bmkl-surface: Canvas;
+  --bmkl-text: #172126;
+  --bmkl-text: CanvasText;
+  --bmkl-viewport-gap: 40px;
+  --bmkl-width: 380px;
+}
+
 .bmkl-panel {
   position: fixed;
-  top: 20px;
-  right: 20px;
-  width: min(360px, calc(100vw - 40px));
-  max-height: calc(100vh - 40px);
-  max-height: calc(100dvh - 40px);
+  z-index: 2147483647;
+  top: var(--bmkl-offset);
+  right: var(--bmkl-offset);
+  width: min(var(--bmkl-width), calc(100vw - var(--bmkl-viewport-gap)));
+  max-height: calc(100vh - var(--bmkl-viewport-gap));
+  max-height: calc(100dvh - var(--bmkl-viewport-gap));
   box-sizing: border-box;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 16px;
-  border: 1px solid rgba(20, 28, 35, 0.16);
-  border-radius: 8px;
-  background: Canvas;
-  background: color-mix(in srgb, Canvas 94%, transparent);
-  color: CanvasText;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.22);
+  padding: 18px;
+  border: 1px solid var(--bmkl-border);
+  border-radius: var(--bmkl-radius);
+  background: var(--bmkl-surface);
+  color: var(--bmkl-text);
+  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.2);
+  font:
+    14px/1.5 ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  text-align: start;
+  animation: bmkl-panel-enter 160ms ease-out both;
 }
 
-.bmkl-panel header,
+.bmkl-panel[data-position="top-left"] {
+  right: auto;
+  left: var(--bmkl-offset);
+}
+
+.bmkl-panel[data-position="bottom-left"] {
+  top: auto;
+  right: auto;
+  bottom: var(--bmkl-offset);
+  left: var(--bmkl-offset);
+}
+
+.bmkl-panel[data-position="bottom-right"] {
+  top: auto;
+  bottom: var(--bmkl-offset);
+}
+
+.bmkl-panel *,
+.bmkl-panel *::before,
+.bmkl-panel *::after {
+  box-sizing: border-box;
+}
+
+.bmkl-panel:focus {
+  outline: 3px solid var(--bmkl-accent);
+  outline-offset: 3px;
+}
+
+.bmkl-header,
 .bmkl-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
 }
 
-.bmkl-panel header {
-  font-weight: 760;
+.bmkl-header {
+  justify-content: space-between;
+}
+
+.bmkl-heading {
+  min-width: 0;
+}
+
+.bmkl-eyebrow {
+  margin: 0 0 2px;
+  color: var(--bmkl-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.bmkl-title {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.bmkl-detail {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 12px;
+  margin: 20px 0;
+}
+
+.bmkl-label,
+.bmkl-panel dt {
+  color: var(--bmkl-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.bmkl-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .bmkl-actions {
-  justify-content: flex-start;
   flex-wrap: wrap;
 }
 
-.bmkl-status {
-  margin: 12px 0 0;
-  color: GrayText;
-  color: color-mix(in srgb, CanvasText 64%, transparent);
-  font-size: 13px;
-}
-
-.bmkl-panel button {
-  min-height: 34px;
-  border: 0;
-  border-radius: 6px;
-  padding: 0 12px;
-  background: #202a31;
-  color: white;
+.bmkl-button,
+.bmkl-icon-button {
+  min-height: 42px;
+  border-radius: 9px;
   font: inherit;
+  font-weight: 600;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
 }
 
-.bmkl-panel button:focus-visible {
-  outline: 3px solid #4f8cff;
+.bmkl-button {
+  border: 1px solid transparent;
+  padding: 0 14px;
+}
+
+.bmkl-button-primary {
+  background: var(--bmkl-accent);
+  color: white;
+}
+
+.bmkl-button-secondary {
+  border-color: var(--bmkl-border);
+  background: transparent;
+  color: var(--bmkl-text);
+}
+
+.bmkl-icon-button {
+  width: 42px;
+  flex: 0 0 42px;
+  border: 1px solid transparent;
+  padding: 0;
+  background: transparent;
+  color: var(--bmkl-muted);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.bmkl-button:focus-visible,
+.bmkl-icon-button:focus-visible {
+  outline: 3px solid var(--bmkl-accent);
   outline-offset: 2px;
 }
 
-.bmkl-panel [data-action="close"] {
-  width: 34px;
-  padding: 0;
+.bmkl-button:active,
+.bmkl-icon-button:active {
+  transform: translateY(1px);
+}
+
+.bmkl-button:disabled,
+.bmkl-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.bmkl-status {
+  margin: 16px 0 0;
+  color: var(--bmkl-muted);
+  font-size: 13px;
+}
+
+/* Shared snapshot-list layout used by the data-oriented starters. */
+.bmkl-panel dl {
+  display: grid;
+  gap: 12px;
+  margin: 20px 0;
+}
+
+.bmkl-panel dl div {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.bmkl-panel dd {
+  min-width: 0;
+  margin: 0;
+}
+
+@media (hover: hover) {
+  .bmkl-button-primary:hover {
+    background: var(--bmkl-accent-strong);
+  }
+
+  .bmkl-button-secondary:hover,
+  .bmkl-icon-button:hover {
+    border-color: var(--bmkl-border);
+    background: rgba(127, 127, 127, 0.1);
+    background: color-mix(in srgb, var(--bmkl-text) 7%, transparent);
+    color: var(--bmkl-text);
+  }
+}
+
+@media (max-width: 520px) {
+  .bmkl-panel[data-position] {
+    inset: auto 12px 12px;
+    width: auto;
+    max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px);
+  }
+
+  .bmkl-actions .bmkl-button {
+    flex: 1 1 150px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bmkl-panel {
+    animation: none;
+  }
+
+  .bmkl-button,
+  .bmkl-icon-button {
+    transition: none;
+  }
+}
+
+@keyframes bmkl-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

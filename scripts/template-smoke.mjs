@@ -170,6 +170,12 @@ async function smokeTemplate({
     cwd: projectDir,
     label: `${templateName} typecheck`,
   });
+  if (templateName === "ttsc-shadow") {
+    await runPnpm(["run", "emit:types"], {
+      cwd: projectDir,
+      label: `${templateName} emit types`,
+    });
+  }
   await runPnpm(["run", "build"], {
     cwd: projectDir,
     label: `${templateName} build`,
@@ -183,7 +189,32 @@ async function smokeTemplate({
       "dist/bookmarklet/meta/build-report.json",
     ].map((path) => access(join(projectDir, path))),
   );
+  if (templateName === "ttsc-shadow") {
+    await assertTtscCompilerOutput(projectDir, templateName);
+  }
   console.log(`\u2713 ${templateName}`);
+}
+
+async function assertTtscCompilerOutput(projectDir, templateName) {
+  const declarationPath = join(projectDir, "dist/types/publicApi.d.ts");
+  const declaration = await readFile(declarationPath, "utf8");
+  if (declaration.includes("@app/")) {
+    throw new Error(
+      `${templateName} declaration output still contains the @app/ source alias.`,
+    );
+  }
+
+  const remoteBundle = await readFile(
+    join(projectDir, "dist/bookmarklet/remote/app.iife.js"),
+    "utf8",
+  );
+  for (const marker of ["[bmkl] page snapshot", "BMKL root"]) {
+    if (remoteBundle.includes(marker)) {
+      throw new Error(
+        `${templateName} production bundle still contains dev-only marker: ${marker}`,
+      );
+    }
+  }
 }
 
 function assertPublishedDependencies(manifest, bmklVersion, templateName) {

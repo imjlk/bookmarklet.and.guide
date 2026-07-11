@@ -61,7 +61,7 @@ const workflow = [
     icon: Play,
     title: "Develop",
     command: "cd my-agent && pnpm install && pnpm dev",
-    body: "Inside the generated project, install dependencies and use its preview page plus dev bookmarklet.",
+    body: "Inside the generated project, open the local Setup page and drag the install-once bookmarklet to your browser.",
   },
   {
     icon: PackageCheck,
@@ -101,9 +101,9 @@ const templates = [
   {
     name: "ttsc-shadow",
     badge: "Compiler",
-    title: "ttsc + Shadow DOM",
+    title: "ttsc Compiler Stack + Shadow DOM",
     command: "pnpm cli -- create my-agent --local --template ttsc-shadow",
-    body: "Turns on @ttsc/lint, @ttsc/strip, @ttsc/paths, graph scripts, and the Vite unplugin path in a TS-only bookmarklet.",
+    body: "A practical full-stack compiler example with @ttsc/lint, @ttsc/strip, @ttsc/paths, type emission, graph scripts, and the Vite unplugin path.",
   },
   {
     name: "solid-shadow",
@@ -154,11 +154,11 @@ const cliCommands = [
   },
   {
     command: "pnpm exec bmkl dev --port 5173",
-    detail: "Generated project — start Vite and print a development bookmarklet that loads the module from localhost.",
+    detail: "Generated project — start Vite and open the local Setup page to drag or copy an install-once bookmarklet.",
   },
   {
     command: "pnpm exec bmkl dev --debug --target https://example.com",
-    detail: "Generated project — print a debug bookmarklet, serve a local console, and collect target-site events.",
+    detail: "Generated project — add a debug installer to Setup, serve a local console, and collect target-site events.",
   },
   {
     command: "pnpm exec bmkl companion --target https://example.com --port 5173",
@@ -204,13 +204,13 @@ const debugFlow = [
   ],
   [
     "2",
-    "Open the target site",
-    "Visit the real page where the bookmarklet must run, not just the Vite preview page.",
+    "Install from Setup",
+    "Open the printed local Setup URL and drag BMKL debug to your bookmarks bar once.",
   ],
   [
     "3",
-    "Click the debug bookmarklet",
-    "The target tab mounts a BMKL debug overlay, opens the localhost console, and starts best-effort event collection.",
+    "Open the target site",
+    "Visit the real page where the bookmarklet must run, then click BMKL debug in the bookmarks bar.",
   ],
   [
     "4",

@@ -50,6 +50,7 @@ export interface CreateProjectResult {
   destination: string;
   template: TemplateInfo;
   projectName: string;
+  projectTitle: string;
   globalName: string;
   projectId: string;
   packageManager: string;
@@ -61,6 +62,7 @@ interface TemplateReplacements {
   packageManager: string;
   projectId: string;
   projectName: string;
+  projectTitle: string;
 }
 
 const TEMPLATE_INFOS: TemplateInfo[] = [
@@ -74,11 +76,13 @@ const TEMPLATE_INFOS: TemplateInfo[] = [
   },
   {
     name: "ttsc-shadow",
-    title: "ttsc + Shadow DOM",
+    title: "ttsc Compiler Stack + Shadow DOM",
     framework: "Vanilla + ttsc plugins",
     language: "TypeScript",
-    description: "A compiler-aware starter using ttsc lint, strip, paths, and graph.",
-    recommendedFor: "Teams that want to showcase or extend ttsc-powered DX.",
+    description:
+      "A practical compiler-stack starter with typed paths, lint and format fixes, production stripping, declarations, and dependency graphs.",
+    recommendedFor:
+      "Teams that want compiler-enforced quality and inspectable architecture without a UI framework.",
   },
   {
     name: "solid-shadow",
@@ -195,8 +199,10 @@ export async function createProject(
   }
 
   const destination = resolve(options.destination);
-  const projectName = toPackageName(basename(destination));
-  const globalName = toGlobalName(basename(destination));
+  const destinationName = basename(destination);
+  const projectName = toPackageName(destinationName);
+  const projectTitle = toProjectTitle(destinationName);
+  const globalName = toGlobalName(destinationName);
   const projectId = `__bmkl_${projectName.replace(/[^a-z0-9]+/g, "_")}__`;
   const { packageManager, version: bmklVersion } =
     await getBmklPackageMetadata();
@@ -220,6 +226,7 @@ export async function createProject(
     packageManager,
     projectId,
     projectName,
+    projectTitle,
   });
   if (localPackageSpecifiers) {
     await applyLocalPackageSpecifiers(destination, localPackageSpecifiers);
@@ -255,6 +262,7 @@ export async function createProject(
     packageManager,
     projectId,
     projectName,
+    projectTitle,
     template,
   };
 }
@@ -518,6 +526,7 @@ function applyReplacements(
     .replaceAll("__BMKL_VERSION__", replacements.bmklVersion)
     .replaceAll("__BMKL_PACKAGE_MANAGER__", replacements.packageManager)
     .replaceAll("__BMKL_PROJECT_NAME__", replacements.projectName)
+    .replaceAll("__BMKL_PROJECT_TITLE__", replacements.projectTitle)
     .replaceAll("__BMKL_GLOBAL_NAME__", replacements.globalName)
     .replaceAll("__BMKL_PROJECT_ID__", replacements.projectId);
 }
@@ -568,6 +577,29 @@ function toPackageName(input: string): string {
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return normalized || "bookmarklet-app";
+}
+
+function toProjectTitle(input: string): string {
+  const normalized = input
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) {
+    return "Bookmarklet App";
+  }
+
+  return normalized
+    .split(" ")
+    .map((part) => {
+      if (/^[A-Z0-9]+$/.test(part)) {
+        return part;
+      }
+      return `${part.charAt(0).toUpperCase()}${part.slice(1)}`;
+    })
+    .join(" ");
 }
 
 function toGlobalName(input: string): string {

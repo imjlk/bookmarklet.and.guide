@@ -14,6 +14,7 @@ import test from "node:test";
 import {
   createProject,
   getTemplateDir,
+  getTemplateInfo,
   TEMPLATE_NAMES,
 } from "../dist/index.js";
 
@@ -22,12 +23,70 @@ const templatesPackageManifest = JSON.parse(
 );
 const expectedPackageManager = templatesPackageManifest.bmkl.packageManager;
 const packageVersion = templatesPackageManifest.version;
+const panelSourceByTemplate = {
+  "lit-shadow": "inject.ts",
+  "react-shadow": "App.tsx",
+  "solid-query-shadow": "App.tsx",
+  "solid-shadow": "App.tsx",
+  "ttsc-shadow": "renderPanel.ts",
+  "vanilla-shadow": "inject.ts",
+};
+const entrySourceByTemplate = {
+  "lit-shadow": "inject.ts",
+  "react-shadow": "inject.tsx",
+  "solid-query-shadow": "inject.tsx",
+  "solid-shadow": "inject.tsx",
+  "ttsc-shadow": "inject.ts",
+  "vanilla-shadow": "inject.ts",
+};
 
 assert.equal(templatesPackageManifest.packageManager, expectedPackageManager);
 
 test("getTemplateDir rejects unknown names and traversal", () => {
   assert.throws(() => getTemplateDir("../outside"), /Unknown template/);
   assert.throws(() => getTemplateDir("node_modules"), /Unknown template/);
+});
+
+test("ttsc-shadow is presented as the complete compiler-stack template", () => {
+  const template = getTemplateInfo("ttsc-shadow");
+
+  assert.equal(template?.title, "ttsc Compiler Stack + Shadow DOM");
+  assert.match(template?.description ?? "", /typed paths/);
+  assert.match(template?.description ?? "", /declarations/);
+  assert.match(template?.recommendedFor ?? "", /without a UI framework/);
+});
+
+test("shared panel conventions stay synchronized across templates", async () => {
+  // Keep these forkable helpers in generated source, but anchor their shared baseline.
+  const canonicalTemplate = "vanilla-shadow";
+  assert.ok(TEMPLATE_NAMES.includes(canonicalTemplate));
+  const otherTemplates = TEMPLATE_NAMES.filter(
+    (template) => template !== canonicalTemplate,
+  );
+  const canonicalPanelConfig = await readFile(
+    join(getTemplateDir(canonicalTemplate), "src", "panel.config.ts"),
+    "utf8",
+  );
+  const canonicalStyles = await readFile(
+    join(getTemplateDir(canonicalTemplate), "src", "style.css"),
+    "utf8",
+  );
+
+  for (const template of otherTemplates) {
+    assert.equal(
+      await readFile(
+        join(getTemplateDir(template), "src", "panel.config.ts"),
+        "utf8",
+      ),
+      canonicalPanelConfig,
+      `${template} panel config drifted from ${canonicalTemplate}`,
+    );
+    assert.equal(
+      await readFile(join(getTemplateDir(template), "src", "style.css"), "utf8"),
+      canonicalStyles,
+      `${template} panel styles drifted from ${canonicalTemplate}`,
+    );
+  }
 });
 
 for (const template of TEMPLATE_NAMES) {
@@ -45,6 +104,8 @@ for (const template of TEMPLATE_NAMES) {
       assert.equal(manifest.packageManager, expectedPackageManager);
       assert.equal(result.packageManager, expectedPackageManager);
       assert.equal(result.dependencyMode, "published");
+      assert.equal(result.projectName, "app");
+      assert.equal(result.projectTitle, "App");
       assert.equal(manifest.scripts.dev, "bmkl dev");
       assert.equal(manifest.scripts.preview, "vite");
       assert.equal(manifest.scripts.graph, "ttsc-graph view");
@@ -54,18 +115,81 @@ for (const template of TEMPLATE_NAMES) {
 
       const previewHtml = await readFile(join(destination, "index.html"), "utf8");
       assert.match(previewHtml, /src="\/src\/preview\.ts"/);
+      assert.match(previewHtml, /<title>App preview<\/title>/);
+      assert.match(previewHtml, /data-preview-run/);
       const previewEntry = await readFile(
         join(destination, "src", "preview.ts"),
         "utf8",
       );
       assert.match(previewEntry, /import \{ run \} from "\.\/inject\.js";/);
+      assert.match(previewEntry, /\[data-preview-run\]/);
+      assert.match(previewEntry, /addEventListener\("click", run\)/);
       assert.match(previewEntry, /run\(\);/);
+      const panelConfig = await readFile(
+        join(destination, "src", "panel.config.ts"),
+        "utf8",
+      );
+      assert.match(panelConfig, /title: "App"/);
+      assert.match(panelConfig, /event\.key !== "Escape"/);
+      assert.match(
+        panelConfig,
+        /ownerDocument\.addEventListener\("keydown", handleKeydown, true\)/,
+      );
+      assert.match(
+        panelConfig,
+        /ownerDocument\.removeEventListener\("keydown", handleKeydown, true\)/,
+      );
+      assert.match(panelConfig, /previousFocus\.focus/);
+      assert.match(panelConfig, /panel\.focus/);
+      assert.doesNotMatch(panelConfig, /__BMKL_/);
+      const panelSourceName = panelSourceByTemplate[template];
+      const entrySourceName = entrySourceByTemplate[template];
+      assert.ok(
+        panelSourceName,
+        `panelSourceByTemplate is missing ${template}`,
+      );
+      assert.ok(
+        entrySourceName,
+        `entrySourceByTemplate is missing ${template}`,
+      );
+      const panelSource = await readFile(
+        join(destination, "src", panelSourceName),
+        "utf8",
+      );
+      assert.match(panelSource, /role="dialog"/);
+      assert.match(panelSource, /aria-labelledby="bmkl-panel-title"/);
+      assert.match(panelSource, /tab[Ii]ndex=(?:\{-1\}|"-1")/);
+      assert.match(panelSource, /<h2[^>]+id="bmkl-panel-title"/);
+      assert.match(panelSource, /aria-label="Close panel"/);
+      assert.match(panelSource, /panelConfig\.title/);
+      const entrySource = await readFile(
+        join(destination, "src", entrySourceName),
+        "utf8",
+      );
+      assert.match(entrySource, /registerBookmarkletApi/);
+      assert.match(entrySource, /destroy,/);
+      assert.match(entrySource, /globalName: "App"/);
+      assert.match(entrySource, /id: "__bmkl_app__"/);
+      assert.match(entrySource, /registration\.activate\(\)/);
+      assert.match(entrySource, /registration\.release\(\)/);
+      assert.doesNotMatch(entrySource, /Object\.assign\(globalThis/);
+      const panelStyles = await readFile(
+        join(destination, "src", "style.css"),
+        "utf8",
+      );
+      assert.match(panelStyles, /--bmkl-accent:/);
+      assert.match(panelStyles, /--bmkl-radius:/);
+      assert.match(panelStyles, /@media \(prefers-reduced-motion: reduce\)/);
 
       const readme = await readFile(join(destination, "README.md"), "utf8");
-      assert.match(readme, /^# app$/m);
+      assert.match(readme, /^# App$/m);
       assert.match(readme, /pnpm dev/);
-      assert.match(readme, /Install-once dev bookmarklet/);
+      assert.match(readme, /local \*\*Setup\*\* URL/);
+      assert.match(readme, /drag \*\*BMKL dev\*\*/);
       assert.match(readme, /pnpm preview/);
+      assert.match(readme, /^## Customize$/m);
+      assert.match(readme, /src\/panel\.config\.ts/);
+      assert.match(readme, /cache-busted reload cleanup/);
       assert.match(readme, /https:\/\/bookmarklet\.and\.guide\//);
       assert.doesNotMatch(readme, /__BMKL_/);
 
@@ -100,6 +224,74 @@ for (const template of TEMPLATE_NAMES) {
     }
   });
 }
+
+test("createProject derives a display title without changing code identifiers", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "bmkl-templates-title-test-"));
+  const destination = join(tempRoot, "my-agent");
+
+  try {
+    const result = await createProject({
+      destination,
+      template: "vanilla-shadow",
+    });
+    const manifest = JSON.parse(
+      await readFile(join(destination, "package.json"), "utf8"),
+    );
+    const bookmarkletConfig = await readFile(
+      join(destination, "bookmarklet.config.ts"),
+      "utf8",
+    );
+    const readme = await readFile(join(destination, "README.md"), "utf8");
+    const previewHtml = await readFile(join(destination, "index.html"), "utf8");
+    const panelConfig = await readFile(
+      join(destination, "src", "panel.config.ts"),
+      "utf8",
+    );
+
+    assert.equal(result.projectName, "my-agent");
+    assert.equal(result.projectTitle, "My Agent");
+    assert.equal(result.globalName, "MyAgent");
+    assert.equal(result.projectId, "__bmkl_my_agent__");
+    assert.equal(manifest.name, "my-agent");
+    assert.match(bookmarkletConfig, /name: "my-agent"/);
+    assert.match(readme, /^# My Agent$/m);
+    assert.match(previewHtml, /<title>My Agent preview<\/title>/);
+    assert.match(panelConfig, /title: "My Agent"/);
+    assert.doesNotMatch(readme, /__BMKL_/);
+    assert.doesNotMatch(previewHtml, /__BMKL_/);
+    assert.doesNotMatch(panelConfig, /__BMKL_/);
+  } finally {
+    await rm(tempRoot, { force: true, recursive: true });
+  }
+});
+
+test("createProject keeps display-title replacements safe across file contexts", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "bmkl-templates-title-test-"));
+  const destination = join(tempRoot, "my&copy;agent");
+
+  try {
+    const result = await createProject({
+      destination,
+      template: "vanilla-shadow",
+    });
+    const panelConfig = await readFile(
+      join(destination, "src", "panel.config.ts"),
+      "utf8",
+    );
+    const readme = await readFile(join(destination, "README.md"), "utf8");
+    const previewHtml = await readFile(join(destination, "index.html"), "utf8");
+
+    assert.equal(result.projectName, "my-copy-agent");
+    assert.equal(result.projectTitle, "My Copy Agent");
+    assert.equal(result.globalName, "MyCopyAgent");
+    assert.equal(result.projectId, "__bmkl_my_copy_agent__");
+    assert.match(panelConfig, /title: "My Copy Agent"/);
+    assert.match(readme, /^# My Copy Agent$/m);
+    assert.match(previewHtml, /<title>My Copy Agent preview<\/title>/);
+  } finally {
+    await rm(tempRoot, { force: true, recursive: true });
+  }
+});
 
 test("createProject local mode links every BMKL package from the source checkout", async () => {
   const tempRoot = await mkdtemp(join(tmpdir(), "bmkl-templates-local-test-"));

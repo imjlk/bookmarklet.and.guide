@@ -1,9 +1,16 @@
 import {
+  captureBookmarkletDebugError,
   logBookmarkletDebugEvent,
   mountBookmarkletApp,
+  registerBookmarkletApi,
 } from "@bmkl/runtime";
 import { LitElement, css, html, unsafeCSS } from "lit";
 import { copyText } from "./copyText.js";
+import {
+  connectPanel,
+  panelConfig,
+  type PanelController,
+} from "./panel.config.js";
 import styles from "./style.css?inline";
 
 class BmklLitPanel extends LitElement {
@@ -15,6 +22,7 @@ class BmklLitPanel extends LitElement {
   static styles = css`${unsafeCSS(styles)}`;
 
   destroyApp: () => void = () => {};
+  private controller?: PanelController;
   declare private selection: string;
   declare private status: string;
 
@@ -24,21 +32,61 @@ class BmklLitPanel extends LitElement {
     this.status = "Copy the selection, or the page URL when nothing is selected.";
   }
 
+  protected firstUpdated(): void {
+    const panel = this.renderRoot.querySelector<HTMLElement>(".bmkl-panel");
+    if (panel) {
+      this.controller = connectPanel(panel, this.destroyApp);
+    }
+  }
+
+  disconnectedCallback(): void {
+    this.controller?.disconnect();
+    this.controller = undefined;
+    super.disconnectedCallback();
+  }
+
   render() {
     return html`
-      <section class="bmkl-panel">
-        <header>
-          <span>__BMKL_PROJECT_NAME__</span>
-          <button type="button" aria-label="Close" @click=${this.destroyApp}>
-            ×
+      <section
+        class="bmkl-panel"
+        data-position=${panelConfig.position}
+        role="dialog"
+        aria-labelledby="bmkl-panel-title"
+        tabindex="-1"
+      >
+        <header class="bmkl-header">
+          <div class="bmkl-heading">
+            <p class="bmkl-eyebrow">${panelConfig.eyebrow}</p>
+            <h2 class="bmkl-title" id="bmkl-panel-title">
+              ${panelConfig.title}
+            </h2>
+          </div>
+          <button
+            class="bmkl-icon-button"
+            type="button"
+            aria-label="Close panel"
+            @click=${this.closePanel}
+          >
+            <span aria-hidden="true">×</span>
           </button>
         </header>
-        <p>
-          Selection: <strong>${this.selection || "none"}</strong>
+        <p class="bmkl-detail">
+          <span class="bmkl-label">Selection</span>
+          <strong class="bmkl-value">${this.selection || "none"}</strong>
         </p>
         <div class="bmkl-actions">
-          <button type="button" @click=${this.refreshSelection}>Refresh</button>
-          <button type="button" @click=${this.copySelectionOrUrl}>
+          <button
+            class="bmkl-button bmkl-button-secondary"
+            type="button"
+            @click=${this.refreshSelection}
+          >
+            Refresh selection
+          </button>
+          <button
+            class="bmkl-button bmkl-button-primary"
+            type="button"
+            @click=${this.copySelectionOrUrl}
+          >
             Copy selection / URL
           </button>
         </div>
@@ -46,6 +94,14 @@ class BmklLitPanel extends LitElement {
       </section>
     `;
   }
+
+  private closePanel = (): void => {
+    if (this.controller) {
+      this.controller.close();
+    } else {
+      this.destroyApp();
+    }
+  };
 
   private refreshSelection = (): void => {
     this.selection = readSelection();
@@ -64,20 +120,46 @@ class BmklLitPanel extends LitElement {
 const panelTagName = createPanelTagName();
 customElements.define(panelTagName, BmklLitPanel);
 
-export function run(): void {
-  const ctx = mountBookmarkletApp({
-    id: "__BMKL_PROJECT_ID__",
-    mode: "shadow",
-  });
+let destroyHost: (() => void) | undefined;
 
-  const panel = document.createElement(panelTagName) as BmklLitPanel;
-  panel.destroyApp = ctx.destroy;
-  ctx.root.replaceChildren(panel);
-  logBookmarkletDebugEvent("app-mounted", "__BMKL_PROJECT_NAME__ mounted");
+export function run(): void {
+  destroy();
+  try {
+    const ctx = mountBookmarkletApp({
+      id: "__BMKL_PROJECT_ID__",
+      mode: "shadow",
+    });
+    destroyHost = ctx.destroy;
+    registration.activate();
+
+    const panel = document.createElement(panelTagName) as BmklLitPanel;
+    panel.destroyApp = destroy;
+    ctx.root.replaceChildren(panel);
+    logBookmarkletDebugEvent("app-mounted", "__BMKL_PROJECT_NAME__ mounted");
+  } catch (error) {
+    destroy();
+    captureBookmarkletDebugError(error, "lit-mount");
+    throw error;
+  }
 }
 
-Object.assign(globalThis, {
-  __BMKL_GLOBAL_NAME__: { run },
+export function destroy(): void {
+  const destroyCurrentHost = destroyHost;
+  destroyHost = undefined;
+  try {
+    destroyCurrentHost?.();
+  } catch (error) {
+    captureBookmarkletDebugError(error, "lit-host-cleanup");
+  } finally {
+    registration.release();
+  }
+}
+
+const registration = registerBookmarkletApi({
+  id: "__BMKL_PROJECT_ID__",
+  globalName: "__BMKL_GLOBAL_NAME__",
+  run,
+  destroy,
 });
 
 function readSelection(): string {

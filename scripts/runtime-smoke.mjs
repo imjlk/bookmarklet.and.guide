@@ -12,6 +12,7 @@ import {
   createBookmarkletBridge,
   createBookmarkletActionRegistry,
   isBookmarkletBridgeMessage,
+  registerBookmarkletApi,
 } from "../packages/runtime/dist/index.js";
 
 const runtimeSource = await readFile(
@@ -24,6 +25,7 @@ await testBridgeContractParity();
 await testBridgeLifecycle();
 await testActionValidation();
 await testAbortedActionDoesNotPost();
+await testApiRegistrationValidation();
 const browserTypes = { chromium, firefox, webkit };
 const requestedBrowsers = (
   process.env.BMKL_RUNTIME_BROWSERS ?? "chromium"
@@ -300,6 +302,75 @@ async function testAbortedActionDoesNotPost() {
   assert.deepEqual(posts, []);
 }
 
+function testApiRegistrationValidation() {
+  const valid = {
+    id: "runtime-smoke-validation",
+    globalName: "__BMKL_API_VALIDATION__",
+    run() {},
+    destroy() {},
+  };
+
+  for (const options of [
+    { ...valid, id: "" },
+    { ...valid, globalName: "  " },
+    { ...valid, run: undefined },
+    { ...valid, destroy: null },
+  ]) {
+    assert.throws(() => registerBookmarkletApi(options), /must be/);
+  }
+
+  for (const globalName of [
+    "__proto__",
+    "constructor",
+    "hasOwnProperty",
+    "prototype",
+    "toString",
+  ]) {
+    assert.throws(
+      () => registerBookmarkletApi({ ...valid, globalName }),
+      /unsafe/,
+    );
+  }
+
+  for (const globalName of [
+    "eval",
+    "Function",
+    "globalThis",
+    "Infinity",
+    "NaN",
+    "undefined",
+  ]) {
+    const existing = globalThis[globalName];
+    assert.throws(
+      () => registerBookmarkletApi({ ...valid, globalName }),
+      /already defined/,
+    );
+    assert.equal(globalThis[globalName], existing);
+  }
+
+  const undefinedHostName = "__BMKL_RUNTIME_UNDEFINED_HOST_GLOBAL__";
+  Object.defineProperty(globalThis, undefinedHostName, {
+    value: undefined,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+  try {
+    assert.throws(
+      () =>
+        registerBookmarkletApi({
+          ...valid,
+          globalName: undefinedHostName,
+        }),
+      /already defined/,
+    );
+    assert.equal(Object.hasOwn(globalThis, undefinedHostName), true);
+    assert.equal(globalThis[undefinedHostName], undefined);
+  } finally {
+    Reflect.deleteProperty(globalThis, undefinedHostName);
+  }
+}
+
 async function testBrowserMounts(browserName, browserType) {
   const browser = await browserType.launch({ headless: true });
   try {
@@ -394,6 +465,254 @@ async function testBrowserMounts(browserName, browserType) {
     assert.match(result.iframeSandbox, /allow-same-origin/);
     assert.doesNotMatch(result.iframeSandbox, /allow-scripts/);
     assert.equal(result.mountsDestroyed, true);
+
+    const apiHandoff = await withTimeout(
+      page.evaluate(async (moduleUrl) => {
+        const firstRuntime = await import(`${moduleUrl}#api-first`);
+        const secondRuntime = await import(`${moduleUrl}#api-second`);
+        const thirdRuntime = await import(`${moduleUrl}#api-third`);
+        const fourthRuntime = await import(`${moduleUrl}#api-fourth`);
+        const cleanupCalls = [];
+        const id = "runtime-smoke-api-handoff";
+
+        const originalGlobalPrototype = Object.getPrototypeOf(globalThis);
+        const originalConstructor = globalThis.constructor;
+        const originalPrototypeDescriptor = Object.getOwnPropertyDescriptor(
+          globalThis,
+          "prototype",
+        );
+        const dangerousErrors = [];
+        for (const globalName of ["__proto__", "constructor", "prototype"]) {
+          try {
+            firstRuntime.registerBookmarkletApi({
+              id: `runtime-smoke-dangerous-${globalName}`,
+              globalName,
+              run() {},
+              destroy() {},
+            });
+          } catch (error) {
+            dangerousErrors.push(String(error));
+          }
+        }
+        const dangerousNamesWereSafe =
+          dangerousErrors.length === 3 &&
+          dangerousErrors.every((message) => message.includes("unsafe")) &&
+          Object.getPrototypeOf(globalThis) === originalGlobalPrototype &&
+          globalThis.constructor === originalConstructor &&
+          JSON.stringify(
+            Object.getOwnPropertyDescriptor(globalThis, "prototype"),
+          ) === JSON.stringify(originalPrototypeDescriptor);
+
+        const first = firstRuntime.registerBookmarkletApi({
+          id,
+          globalName: "__BMKL_API_FIRST__",
+          run: () => "first",
+          destroy: () => cleanupCalls.push("first"),
+        });
+        const firstGlobalDescriptor = Object.getOwnPropertyDescriptor(
+          globalThis,
+          "__BMKL_API_FIRST__",
+        );
+        const firstGlobal =
+          globalThis.__BMKL_API_FIRST__ === first.api &&
+          firstGlobalDescriptor?.configurable === true &&
+          firstGlobalDescriptor.enumerable === true &&
+          firstGlobalDescriptor.writable === true;
+
+        const second = secondRuntime.registerBookmarkletApi({
+          id,
+          globalName: "__BMKL_API_SECOND__",
+          run: () => "second",
+          destroy: () => cleanupCalls.push("second"),
+        });
+        const replacement = {
+          firstCleaned: cleanupCalls.join(",") === "first",
+          oldGlobalRemoved: !("__BMKL_API_FIRST__" in globalThis),
+          newGlobalInstalled: globalThis.__BMKL_API_SECOND__ === second.api,
+        };
+
+        second.release();
+        const releasedGlobalCallable =
+          globalThis.__BMKL_API_SECOND__?.run() === "second";
+        const third = thirdRuntime.registerBookmarkletApi({
+          id,
+          globalName: "__BMKL_API_THIRD__",
+          run: () => "third",
+          destroy: () => cleanupCalls.push("third"),
+        });
+        const releasedApiWasNotCleaned = !cleanupCalls.includes("second");
+
+        third.release();
+        second.activate();
+        const reactivatedGlobal = globalThis.__BMKL_API_SECOND__ === second.api;
+        const fourth = fourthRuntime.registerBookmarkletApi({
+          id,
+          globalName: "__BMKL_API_FOURTH__",
+          run: () => "fourth",
+          destroy: () => cleanupCalls.push("fourth"),
+        });
+        const reactivatedApiWasCleaned = cleanupCalls.includes("second");
+
+        const releasedFirst = thirdRuntime.registerBookmarkletApi({
+          id: "runtime-smoke-api-released-same-name",
+          globalName: "__BMKL_API_RELEASED_SAME_NAME__",
+          run: () => "released-first",
+          destroy: () => cleanupCalls.push("released-first"),
+        });
+        const ownershipDescriptor = Object.getOwnPropertyDescriptor(
+          releasedFirst.api,
+          Symbol.for(
+            "@bmkl/runtime/bookmarklet-api-registration:api-ownership",
+          ),
+        );
+        releasedFirst.release();
+        const releasedSecond = fourthRuntime.registerBookmarkletApi({
+          id: "runtime-smoke-api-released-same-name",
+          globalName: "__BMKL_API_RELEASED_SAME_NAME__",
+          run: () => "released-second",
+          destroy: () => cleanupCalls.push("released-second"),
+        });
+        const releasedSameNameWasHandedOff =
+          !cleanupCalls.includes("released-first") &&
+          globalThis.__BMKL_API_RELEASED_SAME_NAME__ === releasedSecond.api &&
+          globalThis.__BMKL_API_RELEASED_SAME_NAME__.run() === "released-second" &&
+          ownershipDescriptor?.enumerable === false;
+        releasedSecond.release();
+
+        const collisionCleanupCalls = [];
+        const collisionPrevious = firstRuntime.registerBookmarkletApi({
+          id: "runtime-smoke-api-host-collision",
+          globalName: "__BMKL_API_COLLISION_PREVIOUS__",
+          run: () => "collision-previous",
+          destroy: () => collisionCleanupCalls.push("previous"),
+        });
+        const hostGlobal = { owner: "host-page" };
+        Object.defineProperty(globalThis, "__BMKL_API_HOST_GLOBAL__", {
+          value: hostGlobal,
+          configurable: true,
+          enumerable: true,
+          writable: true,
+        });
+        let hostCollisionMessage = "";
+        try {
+          secondRuntime.registerBookmarkletApi({
+            id: "runtime-smoke-api-host-collision",
+            globalName: "__BMKL_API_HOST_GLOBAL__",
+            run() {},
+            destroy: () => collisionCleanupCalls.push("incoming"),
+          });
+        } catch (error) {
+          hostCollisionMessage = String(error);
+        }
+        const hostCollisionWasPreserved =
+          hostCollisionMessage.includes("already defined") &&
+          globalThis.__BMKL_API_HOST_GLOBAL__ === hostGlobal &&
+          globalThis.__BMKL_API_COLLISION_PREVIOUS__ === collisionPrevious.api &&
+          collisionCleanupCalls.length === 0;
+
+        const protectedGlobalValue = { owner: "page" };
+        firstRuntime.registerBookmarkletApi({
+          id: "runtime-smoke-api-identity",
+          globalName: "__BMKL_API_PROTECTED__",
+          run() {},
+          destroy: () => cleanupCalls.push("protected"),
+        });
+        globalThis.__BMKL_API_PROTECTED__ = protectedGlobalValue;
+        secondRuntime.registerBookmarkletApi({
+          id: "runtime-smoke-api-identity",
+          globalName: "__BMKL_API_PROTECTED_NEXT__",
+          run() {},
+          destroy() {},
+        });
+        const pageGlobalWasPreserved =
+          globalThis.__BMKL_API_PROTECTED__ === protectedGlobalValue;
+
+        const previousDebugSession = globalThis.__BMKL_DEBUG_SESSION__;
+        const previousConsoleError = console.error;
+        const reportedErrors = [];
+        let consoleErrorCount = 0;
+        try {
+          globalThis.__BMKL_DEBUG_SESSION__ = {
+            event() {},
+            error(error, phase) {
+              reportedErrors.push({ error: String(error), phase });
+            },
+          };
+          console.error = () => {
+            consoleErrorCount += 1;
+          };
+          const failing = firstRuntime.registerBookmarkletApi({
+            id: "runtime-smoke-api-errors",
+            globalName: "__BMKL_API_FAILING__",
+            run() {},
+            destroy() {
+              throw new Error("expected cleanup failure");
+            },
+          });
+          secondRuntime.registerBookmarkletApi({
+            id: "runtime-smoke-api-errors",
+            globalName: "__BMKL_API_AFTER_FAILURE__",
+            run() {},
+            destroy() {},
+          });
+          if (globalThis.__BMKL_API_FAILING__ === failing.api) {
+            throw new Error("The failing API global was not handed off.");
+          }
+        } finally {
+          console.error = previousConsoleError;
+          if (previousDebugSession === undefined) {
+            delete globalThis.__BMKL_DEBUG_SESSION__;
+          } else {
+            globalThis.__BMKL_DEBUG_SESSION__ = previousDebugSession;
+          }
+        }
+
+        fourth.release();
+        return {
+          firstGlobal,
+          dangerousNamesWereSafe,
+          replacement,
+          releasedGlobalCallable,
+          releasedApiWasNotCleaned,
+          thirdGlobalStillCallable:
+            globalThis.__BMKL_API_THIRD__?.run() === "third",
+          reactivatedGlobal,
+          reactivatedApiWasCleaned,
+          activeGlobal: globalThis.__BMKL_API_FOURTH__ === fourth.api,
+          inactiveThirdWasNotCleaned: !cleanupCalls.includes("third"),
+          handoffCleanupCalls: cleanupCalls.filter((name) =>
+            ["first", "second", "third", "fourth"].includes(name),
+          ),
+          pageGlobalWasPreserved,
+          releasedSameNameWasHandedOff,
+          hostCollisionWasPreserved,
+          cleanupErrorReported:
+            reportedErrors.length === 1 &&
+            reportedErrors[0].phase === "api-handoff-cleanup" &&
+            consoleErrorCount === 1,
+        };
+      }, runtimeModuleUrl),
+      10_000,
+      `${browserName} runtime API handoff assertions`,
+    );
+
+    assert.equal(apiHandoff.firstGlobal, true);
+    assert.equal(apiHandoff.dangerousNamesWereSafe, true);
+    assert.equal(apiHandoff.replacement.firstCleaned, true);
+    assert.equal(apiHandoff.replacement.oldGlobalRemoved, true);
+    assert.equal(apiHandoff.replacement.newGlobalInstalled, true);
+    assert.equal(apiHandoff.releasedGlobalCallable, true);
+    assert.equal(apiHandoff.releasedApiWasNotCleaned, true);
+    assert.equal(apiHandoff.thirdGlobalStillCallable, true);
+    assert.equal(apiHandoff.reactivatedGlobal, true);
+    assert.equal(apiHandoff.reactivatedApiWasCleaned, true);
+    assert.equal(apiHandoff.activeGlobal, true);
+    assert.equal(apiHandoff.inactiveThirdWasNotCleaned, true);
+    assert.deepEqual(apiHandoff.handoffCleanupCalls, ["first", "second"]);
+    assert.equal(apiHandoff.pageGlobalWasPreserved, true);
+    assert.equal(apiHandoff.releasedSameNameWasHandedOff, true);
+    assert.equal(apiHandoff.hostCollisionWasPreserved, true);
+    assert.equal(apiHandoff.cleanupErrorReported, true);
   } finally {
     await browser.close();
   }

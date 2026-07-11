@@ -3,6 +3,7 @@ import {
   installBookmarkletStyles,
   logBookmarkletDebugEvent,
   mountBookmarkletApp,
+  registerBookmarkletApi,
 } from "@bmkl/runtime";
 import {
   QueryClient,
@@ -17,7 +18,7 @@ let destroyHost: (() => void) | undefined;
 let queryClient: QueryClient | undefined;
 
 export function run(): void {
-  cleanup();
+  destroy();
   try {
     const client = new QueryClient({
       defaultOptions: {
@@ -35,25 +36,26 @@ export function run(): void {
       mode: "shadow",
     });
     destroyHost = ctx.destroy;
+    registration.activate();
     installBookmarkletStyles(ctx, styles);
 
     dispose = render(
       () => (
         <QueryClientProvider client={client}>
-          <App destroy={cleanup} />
+          <App destroy={destroy} />
         </QueryClientProvider>
       ),
       ctx.root,
     );
     logBookmarkletDebugEvent("app-mounted", "__BMKL_PROJECT_NAME__ mounted");
   } catch (error) {
-    cleanup();
+    destroy();
     captureBookmarkletDebugError(error, "solid-query-mount");
     throw error;
   }
 }
 
-function cleanup(): void {
+export function destroy(): void {
   const stop = dispose;
   dispose = undefined;
   try {
@@ -70,15 +72,20 @@ function cleanup(): void {
     captureBookmarkletDebugError(error, "solid-query-cache-cleanup");
   }
 
-  const destroy = destroyHost;
+  const destroyCurrentHost = destroyHost;
   destroyHost = undefined;
   try {
-    destroy?.();
+    destroyCurrentHost?.();
   } catch (error) {
     captureBookmarkletDebugError(error, "solid-query-host-cleanup");
+  } finally {
+    registration.release();
   }
 }
 
-Object.assign(globalThis, {
-  __BMKL_GLOBAL_NAME__: { run },
+const registration = registerBookmarkletApi({
+  id: "__BMKL_PROJECT_ID__",
+  globalName: "__BMKL_GLOBAL_NAME__",
+  run,
+  destroy,
 });

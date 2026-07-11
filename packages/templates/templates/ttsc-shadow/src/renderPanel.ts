@@ -1,12 +1,20 @@
 import { copyText } from "./copyText.js";
 import { devAssert } from "./devAssert.js";
 import {
+  connectPanel,
+  panelConfig,
+  type PanelController,
+} from "./panel.config.js";
+import {
   readPageSnapshot,
   summarizeSnapshot,
   type PageSnapshot,
 } from "./pageSnapshot.js";
 
-export function renderPanel(root: HTMLElement, destroy: () => void): void {
+export function renderPanel(
+  root: HTMLElement,
+  destroy: () => void,
+): PanelController | undefined {
   devAssert.present(root, "BMKL root");
 
   const snapshot = readPageSnapshot();
@@ -15,14 +23,21 @@ export function renderPanel(root: HTMLElement, destroy: () => void): void {
   }
 
   root.innerHTML = panelMarkup(snapshot);
+  const panel = root.querySelector<HTMLElement>(".bmkl-panel");
+  if (!panel) {
+    destroy();
+    return undefined;
+  }
+  const controller = connectPanel(panel, destroy);
   root
     .querySelector('[data-action="close"]')
-    ?.addEventListener("click", destroy);
+    ?.addEventListener("click", controller.close);
   root
     .querySelector('[data-action="copy"]')
     ?.addEventListener("click", () => {
       void copySnapshot(root, snapshot);
     });
+  return controller;
 }
 
 async function copySnapshot(root: HTMLElement, snapshot: PageSnapshot): Promise<void> {
@@ -43,26 +58,39 @@ async function copySnapshot(root: HTMLElement, snapshot: PageSnapshot): Promise<
 
 function panelMarkup(snapshot: PageSnapshot): string {
   return `
-    <section class="bmkl-panel">
-      <header>
-        <span>__BMKL_PROJECT_NAME__</span>
-        <button type="button" data-action="close" aria-label="Close">×</button>
+    <section
+      class="bmkl-panel"
+      data-position="${panelConfig.position}"
+      role="dialog"
+      aria-labelledby="bmkl-panel-title"
+      tabindex="-1"
+    >
+      <header class="bmkl-header">
+        <div class="bmkl-heading">
+          <p class="bmkl-eyebrow">${escapeHtml(panelConfig.eyebrow)}</p>
+          <h2 class="bmkl-title" id="bmkl-panel-title">${escapeHtml(panelConfig.title)}</h2>
+        </div>
+        <button class="bmkl-icon-button" type="button" data-action="close" aria-label="Close panel">
+          <span aria-hidden="true">×</span>
+        </button>
       </header>
       <dl>
         <div>
           <dt>Summary</dt>
-          <dd>${escapeHtml(summarizeSnapshot(snapshot))}</dd>
+          <dd class="bmkl-value">${escapeHtml(summarizeSnapshot(snapshot))}</dd>
         </div>
         <div>
           <dt>Selection</dt>
-          <dd>${escapeHtml(snapshot.selectedText || "none")}</dd>
+          <dd class="bmkl-value">${escapeHtml(snapshot.selectedText || "none")}</dd>
         </div>
         <div>
           <dt>URL</dt>
-          <dd>${escapeHtml(snapshot.href)}</dd>
+          <dd class="bmkl-value">${escapeHtml(snapshot.href)}</dd>
         </div>
       </dl>
-      <button type="button" data-action="copy">Copy snapshot</button>
+      <button class="bmkl-button bmkl-button-primary" type="button" data-action="copy">
+        Copy snapshot
+      </button>
       <p class="bmkl-status" data-status role="status" aria-live="polite">
         Copy this typed page snapshot to verify the starter action.
       </p>

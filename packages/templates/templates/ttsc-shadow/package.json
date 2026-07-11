@@ -32,6 +32,7 @@
     "@ttsc/lint": "^0.18.0",
     "@ttsc/paths": "^0.18.0",
     "@ttsc/strip": "^0.18.0",
+    "@types/node": "^26.1.1",
     "esbuild": "^0.28.1",
     "ttsc": "^0.18.0",
     "typescript": "^7.0.2",

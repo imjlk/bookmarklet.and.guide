@@ -126,3 +126,17 @@ jobs:
       - run: pnpm --dir packages/cli pack --out "${{ runner.temp }}/bmkl-cli.tgz"
       - run: pnpm build
       - run: pnpm cli -- templates --json
+      - name: Smoke the ttsc template on Windows
+        shell: pwsh
+        run: |
+          $project = Join-Path $env:RUNNER_TEMP "bmkl-ttsc-shadow"
+          pnpm cli -- create $project --local --template ttsc-shadow
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --dir $project install --no-frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --dir $project typecheck
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --dir $project build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --dir $project emit:types
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

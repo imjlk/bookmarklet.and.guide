@@ -1,8 +1,10 @@
+import { fileURLToPath } from "node:url";
+
 import { bmkl } from "@bmkl/vite";
 import { defineConfig } from "vite";
 
-const lintConfig = new URL("./lint.config.json", import.meta.url).pathname;
-const stripConfig = new URL("./strip.config.json", import.meta.url).pathname;
+const lintConfig = fileURLToPath(new URL("./lint.config.json", import.meta.url));
+const stripConfig = fileURLToPath(new URL("./strip.config.json", import.meta.url));
 
 export default defineConfig({
   plugins: bmkl({
@@ -18,7 +20,7 @@ export default defineConfig({
   }),
   resolve: {
     alias: {
-      "@app": new URL("./src", import.meta.url).pathname,
+      "@app": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
 });
