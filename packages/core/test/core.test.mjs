@@ -176,7 +176,11 @@ test("dev debug endpoints require the project token shared with companion", asyn
     }
 
     const port = await getFreePort();
-    const dev = await new BookmarkBuilder(config).dev({
+    const unsafeAppName = '<img src=x onerror="alert(1)">';
+    const dev = await new BookmarkBuilder({
+      ...config,
+      name: unsafeAppName,
+    }).dev({
       debug: true,
       host: "127.0.0.1",
       port,
@@ -188,6 +192,38 @@ test("dev debug endpoints require the project token shared with companion", asyn
       const consoleUrl = new URL(dev.debugConsoleUrl);
       assert.equal(consoleUrl.searchParams.get("token"), token);
 
+      const setupUrl = new URL(dev.setupUrl);
+      assert.equal(setupUrl.pathname, "/__bmkl/setup");
+      assert.equal(setupUrl.searchParams.get("token"), token);
+      assert.deepEqual(dev.networkSetupUrls, []);
+      const setupResponse = await fetch(setupUrl);
+      assert.equal(setupResponse.status, 200);
+      assert.equal(setupResponse.headers.get("cache-control"), "no-store");
+      assert.match(
+        setupResponse.headers.get("content-security-policy") ?? "",
+        /default-src 'none'/,
+      );
+      assert.match(
+        setupResponse.headers.get("content-type") ?? "",
+        /^text\/html/,
+      );
+      const setupHtml = await setupResponse.text();
+      assert.match(setupHtml, /BMKL local setup/);
+      assert.doesNotMatch(setupHtml, /<img src=x/);
+      assert.match(
+        setupHtml,
+        /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;/,
+      );
+      assert.match(setupHtml, /id="dev-bookmarklet"/);
+      assert.match(setupHtml, /id="debug-bookmarklet"/);
+      assert.match(setupHtml, /javascript:/);
+      const setupHead = await fetch(setupUrl, { method: "HEAD" });
+      assert.equal(setupHead.status, 200);
+      assert.equal(await setupHead.text(), "");
+      const setupPost = await fetch(setupUrl, { method: "POST" });
+      assert.equal(setupPost.status, 405);
+      assert.equal(setupPost.headers.get("allow"), "GET, HEAD");
+
       const consoleResponse = await fetch(consoleUrl);
       assert.equal(consoleResponse.status, 200);
       assert.match(await consoleResponse.text(), /debugEventsUrl\.toString\(\)/);
@@ -195,6 +231,14 @@ test("dev debug endpoints require the project token shared with companion", asyn
       const missingTokenUrl = new URL(consoleUrl);
       missingTokenUrl.searchParams.delete("token");
       assert.equal((await fetch(missingTokenUrl)).status, 404);
+
+      const missingSetupTokenUrl = new URL(setupUrl);
+      missingSetupTokenUrl.searchParams.delete("token");
+      assert.equal((await fetch(missingSetupTokenUrl)).status, 404);
+
+      const invalidSetupTokenUrl = new URL(setupUrl);
+      invalidSetupTokenUrl.searchParams.set("token", "invalid");
+      assert.equal((await fetch(invalidSetupTokenUrl)).status, 404);
 
       const invalidTokenUrl = new URL(consoleUrl);
       invalidTokenUrl.searchParams.set("token", "invalid");

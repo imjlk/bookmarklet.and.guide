@@ -1,7 +1,8 @@
 import { readFileSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { relative, resolve } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import {
   BOOKMARKLET_RUNTIME_CHOICES,
   BOOKMARKLET_UPDATE_CHANNEL_CHOICES,
@@ -106,9 +107,7 @@ async function main(argv: string[]): Promise<void> {
       await runContracts(rest);
       return;
     default:
-      throw new Error(
-        `Unknown command: ${commandName}. Run bmkl --help to list commands.`,
-      );
+      throw new Error(`Unknown command: ${commandName}. Run bmkl --help to list commands.`);
   }
 }
 
@@ -146,7 +145,7 @@ async function runCreate(argv: string[]): Promise<void> {
     return;
   }
 
-  printCreateResult(result);
+  printCreateResult(result, target);
 }
 
 async function runTemplates(argv: string[]): Promise<void> {
@@ -291,9 +290,7 @@ async function runInstallPage(argv: string[]): Promise<void> {
   const result = await new BookmarkBuilder(config).build({
     quiet: flagBoolean(args, "json"),
   });
-  const installPage = result.artifacts.find(
-    (artifact) => artifact.kind === "install-html",
-  );
+  const installPage = result.artifacts.find((artifact) => artifact.kind === "install-html");
   if (!installPage) {
     throw new Error("Build completed without an install page artifact.");
   }
@@ -321,7 +318,14 @@ async function runDev(argv: string[]): Promise<void> {
       c: "config",
       p: "port",
     },
-    booleans: ["debug", "help", "https", "open", "strict-port"],
+    booleans: [
+      "debug",
+      "help",
+      "https",
+      "open",
+      "print-bookmarklets",
+      "strict-port",
+    ],
     values: ["config", "host", "port", "target"],
   });
 
@@ -347,6 +351,10 @@ async function runDev(argv: string[]): Promise<void> {
   });
 
   console.log(`Vite: ${server.url}`);
+  console.log(`Setup: ${server.setupUrl}`);
+  for (const networkSetupUrl of server.networkSetupUrls) {
+    console.log(`Setup (network): ${networkSetupUrl}`);
+  }
   if (server.debugConsoleUrl) {
     console.log(`Debug console: ${server.debugConsoleUrl}`);
   }
@@ -354,24 +362,14 @@ async function runDev(argv: string[]): Promise<void> {
     console.log(`Target: ${server.target}`);
   }
   console.log("");
-  console.log("Install-once dev bookmarklet:");
-  console.log(server.launcherBookmarkletUrl);
-  console.log("");
-  console.log("Dev bookmarklet:");
-  console.log(server.bookmarkletUrl);
-  console.log("");
+  console.log("Open Setup to drag or copy the install-once bookmarklet.");
+  console.log("Keep this server running while you test target pages.");
   if (server.debugBookmarkletUrl) {
-    if (server.debugLauncherBookmarkletUrl) {
-      console.log("Install-once debug bookmarklet:");
-      console.log(server.debugLauncherBookmarkletUrl);
-      console.log("");
-    }
-    console.log("Debug bookmarklet:");
-    console.log(server.debugBookmarkletUrl);
     console.log("");
     printDevDebugFlow(server.target);
-  } else {
-    console.log("Install it by creating a browser bookmark with the URL above.");
+  }
+  if (flagBoolean(args, "print-bookmarklets")) {
+    printDevBookmarklets(server);
   }
 
   await new Promise<void>((resolvePromise) => {
@@ -484,21 +482,25 @@ async function runDoctor(argv: string[]): Promise<void> {
   );
 
   if (config.ttsc?.enabled) {
-    const ttscVersion = spawnSync("ttsc", ["--version"], {
-      cwd: config.root,
-      encoding: "utf8",
-    });
+    const ttscLauncher = resolveInstalledPackageBin(config.root, "ttsc", "ttsc");
+    const ttscVersion = ttscLauncher
+      ? spawnSync(process.execPath, [ttscLauncher, "--version"], {
+          cwd: config.root,
+          encoding: "utf8",
+          shell: false,
+        })
+      : undefined;
     checks.push(
-      ttscVersion.status === 0
+      ttscVersion?.status === 0
         ? {
             name: "ttsc-binary",
             status: "pass",
-            message: ttscVersion.stdout.trim(),
+            message: ttscVersion.stdout.trim() || "ttsc executable is available",
           }
         : {
             name: "ttsc-binary",
             status: "fail",
-            message: "Could not run ttsc --version",
+            message: "Could not run the project-local ttsc --version",
           },
     );
   } else {
@@ -711,10 +713,7 @@ function splitOptionArgument(
   const equalsIndex = argument.indexOf("=", prefixLength);
   return equalsIndex === -1
     ? [argument.slice(prefixLength), undefined]
-    : [
-        argument.slice(prefixLength, equalsIndex),
-        argument.slice(equalsIndex + 1),
-      ];
+    : [argument.slice(prefixLength, equalsIndex), argument.slice(equalsIndex + 1)];
 }
 
 function assertOptionNotRepeated(
@@ -750,33 +749,22 @@ async function printRootHelp(): Promise<void> {
   console.log(`bmkl ${VERSION}`);
   console.log("Create Vite-powered bookmarklets and build installable artifacts.");
   console.log("");
-  console.log("Usage:");
-  console.log("  bmkl create <dir> [--template lit-shadow]");
-  console.log("  bmkl templates [--json]");
-  console.log("  bmkl dev [--open]");
-  console.log("  bmkl companion [--target https://example.com]");
-  console.log("  bmkl build [--base-url https://cdn.example.com/bookmarklet/]");
-  console.log("  bmkl inspect [--json]");
-  console.log("  bmkl doctor");
-  console.log("  bmkl contracts smoke");
-  console.log("  bmkl install-page");
+  console.log("Commands:");
+  console.log("  create <dir>    Scaffold a project (alias: init)");
+  console.log("  templates       Compare maintained starters");
+  console.log("  dev             Start Vite and the bookmarklet setup page");
+  console.log("  build           Build remote and inline artifacts");
+  console.log("  inspect         Inspect generated artifact sizes and contracts");
+  console.log("  doctor          Check config, compiler, contracts, and artifacts");
+  console.log("  install-page    Rebuild and print the production install page");
+  console.log("  companion       Build an unpacked strict-CSP test extension");
+  console.log("  contracts       Validate external BMKL payloads");
   console.log("");
-  console.log("Source checkout:");
-  console.log(
-    "  pnpm cli -- create my-bookmarklet --local --template lit-shadow",
-  );
+  console.log("Start:");
+  console.log("  bmkl create my-bookmarklet --template lit-shadow");
+  console.log("  bmkl templates");
   console.log("");
-  console.log("After npm publication (not available yet):");
-  console.log("  npm create bmkl@latest my-bookmarklet -- --template lit-shadow");
-  console.log("  pnpm create bmkl my-bookmarklet --template ttsc-shadow");
-  console.log("  pnpm create bmkl my-bookmarklet --template solid-query-shadow");
-  console.log("  bun create bmkl my-bookmarklet --template vanilla-shadow");
-  console.log("");
-  console.log("Aliases:");
-  console.log("  bmk is the short binary alias");
-  console.log("  bmkl init is an alias for bmkl create");
-  console.log("");
-  printTemplateInfos(await listTemplateInfos());
+  console.log("Run bmkl <command> --help for command options. bmk is a short alias.");
 }
 
 function printCreateHelp(): void {
@@ -840,12 +828,15 @@ function printDevHelp(): void {
   console.log("");
   console.log("Options:");
   console.log("  -c, --config <file>  Path to bookmarklet config file");
-  console.log("  --debug             Print a debug bookmarklet and serve the local debug console");
+  console.log(
+    "  --debug             Print a debug bookmarklet and serve the local debug console",
+  );
   console.log("  --host <host>        Dev server host (default: 127.0.0.1)");
   console.log("  --https             Serve the dev module and debug console over HTTPS");
   console.log("  -p, --port <port>    Dev server port (default: 5173)");
   console.log("  --strict-port        Fail instead of moving to another port");
-  console.log("  --open               Open the Vite preview page");
+  console.log("  --open               Open the bookmarklet setup page");
+  console.log("  --print-bookmarklets Print raw bookmarklet URLs in the terminal");
   console.log("  --target <url>       Target site URL to print in the debug test flow");
   console.log("  -h, --help           Show this help");
 }
@@ -853,13 +844,40 @@ function printDevHelp(): void {
 function printDevDebugFlow(target?: string): void {
   console.log("Target-site debug flow:");
   console.log(`  1. Open ${target ?? "the real target site"} in your browser.`);
-  console.log("  2. Create a bookmark named BMKL debug with the Install-once debug bookmarklet URL above.");
+  console.log("  2. Open Setup and drag BMKL debug to your bookmarks bar.");
   console.log("  3. Click BMKL debug while you are on the target site.");
-  console.log("  4. Reproduce the issue and watch the terminal, local console, and in-page overlay.");
-  console.log("  5. Keep the console window open when popup policy allows it; direct localhost collection still runs.");
-  console.log("  6. If CSP, popup policy, or the bridge blocks delivery, click Copy report in the overlay.");
+  console.log(
+    "  4. Reproduce the issue and watch the terminal, local console, and in-page overlay.",
+  );
+  console.log(
+    "  5. Keep the console window open when popup policy allows it; direct localhost collection still runs.",
+  );
+  console.log(
+    "  6. If CSP, popup policy, or the bridge blocks delivery, click Copy report in the overlay.",
+  );
   console.log("  7. Keep using the same bookmark while the dev host and port stay the same.");
-  console.log("  8. If script-src or strict inline policy blocks the bookmarklet path, build a companion extension with bmkl companion.");
+  console.log(
+    "  8. If script-src or strict inline policy blocks the bookmarklet path, build a companion extension with bmkl companion.",
+  );
+}
+
+function printDevBookmarklets(
+  server: Awaited<ReturnType<BookmarkBuilder["dev"]>>,
+): void {
+  console.log("");
+  console.log("Raw bookmarklet URLs:");
+  console.log("  Install-once dev:");
+  console.log(server.launcherBookmarkletUrl);
+  console.log("  Direct dev:");
+  console.log(server.bookmarkletUrl);
+  if (server.debugLauncherBookmarkletUrl) {
+    console.log("  Install-once debug:");
+    console.log(server.debugLauncherBookmarkletUrl);
+  }
+  if (server.debugBookmarkletUrl) {
+    console.log("  Direct debug:");
+    console.log(server.debugBookmarkletUrl);
+  }
 }
 
 function printCompanionHelp(): void {
@@ -870,8 +888,12 @@ function printCompanionHelp(): void {
   console.log("");
   console.log("Options:");
   console.log("  -c, --config <file>          Path to bookmarklet config file");
-  console.log("  --target <url-or-pattern>    Target URL or Chrome match pattern (default: <all_urls>)");
-  console.log("  --debug-console-url <url>    Debug console URL (default: http://127.0.0.1:5173/__bmkl/debug)");
+  console.log(
+    "  --target <url-or-pattern>    Target URL or Chrome match pattern (default: <all_urls>)",
+  );
+  console.log(
+    "  --debug-console-url <url>    Debug console URL (default: http://127.0.0.1:5173/__bmkl/debug)",
+  );
   console.log("  --host <host>                Debug console host when URL is not provided");
   console.log("  -p, --port <port>            Debug console port when URL is not provided");
   console.log("  --out-dir <dir>              Extension output directory");
@@ -902,7 +924,10 @@ function printContractsHelp(): void {
   console.log("  -h, --help  Show this help");
 }
 
-function printCreateResult(result: CreateProjectResult): void {
+function printCreateResult(
+  result: CreateProjectResult,
+  destinationArgument: string,
+): void {
   console.log(
     `Created ${result.template.name} (${result.template.title}) at ${result.destination}`,
   );
@@ -912,13 +937,49 @@ function printCreateResult(result: CreateProjectResult): void {
   );
   console.log("");
   console.log("Next:");
-  console.log(`  cd ${result.destination}`);
+  printChangeDirectory(destinationArgument);
+  printPnpmPrerequisite(result.packageManager);
   console.log("  pnpm install");
   console.log("  pnpm dev");
   console.log("");
   console.log("Build artifacts:");
   console.log("  pnpm build");
   console.log("  pnpm inspect");
+}
+
+function printPnpmPrerequisite(packageManager: string): void {
+  const probe = spawnSync(
+    process.platform === "win32" ? "where.exe" : "pnpm",
+    process.platform === "win32" ? ["pnpm"] : ["--version"],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    },
+  );
+  if (probe.status === 0) {
+    return;
+  }
+
+  console.log(
+    `  # Prerequisite: install or enable ${packageManager} (for example: corepack enable)`,
+  );
+}
+
+function printChangeDirectory(value: string): void {
+  if (process.platform === "win32") {
+    console.log("  # Windows PowerShell");
+    console.log(
+      `  Set-Location -LiteralPath '${value.replaceAll("'", "''")}'`,
+    );
+    return;
+  }
+
+  const shellPath = value.startsWith("-") ? `./${value}` : value;
+  if (/^[a-zA-Z0-9_./:@+-]+$/.test(shellPath)) {
+    console.log(`  cd ${shellPath}`);
+    return;
+  }
+  console.log(`  cd '${shellPath.replaceAll("'", `'"'"'`)}'`);
 }
 
 function printTemplateInfos(templates: TemplateInfo[]): void {
@@ -950,11 +1011,13 @@ function printBuildResult(
 
   const bookmarklet = result.artifacts.find(
     (artifact) =>
-      artifact.kind === "bookmarklet" && artifact.path.includes("/remote/"),
+      artifact.kind === "bookmarklet" &&
+      isPathInside(
+        resolve(result.config.root, result.config.outDir, "remote"),
+        artifact.path,
+      ),
   );
-  const installPage = result.artifacts.find(
-    (artifact) => artifact.kind === "install-html",
-  );
+  const installPage = result.artifacts.find((artifact) => artifact.kind === "install-html");
 
   console.log("");
   if (bookmarklet) {
@@ -977,7 +1040,9 @@ function printInspectResult(
   console.log("");
   console.log("Artifacts:");
   for (const artifact of result.artifacts) {
-    console.log(`  ${artifact.kind.padEnd(12)} ${artifact.fileName} (${formatBytes(artifact.size)})`);
+    console.log(
+      `  ${artifact.kind.padEnd(12)} ${artifact.fileName} (${formatBytes(artifact.size)})`,
+    );
   }
 
   if (result.manifest) {
@@ -1065,9 +1130,7 @@ function assertAtMostPositionals(
   usage: string,
 ): void {
   if (args.positionals.length > maximum) {
-    throw new Error(
-      `Unexpected argument: ${args.positionals[maximum]}. Usage: ${usage}`,
-    );
+    throw new Error(`Unexpected argument: ${args.positionals[maximum]}. Usage: ${usage}`);
   }
 }
 
@@ -1216,6 +1279,39 @@ function formatBytes(size: number): string {
   return `${(size / 1024).toFixed(1)} kB`;
 }
 
+function isPathInside(parent: string, candidate: string): boolean {
+  const pathFromParent = relative(parent, candidate);
+  return (
+    pathFromParent.length > 0 &&
+    pathFromParent !== ".." &&
+    !pathFromParent.startsWith(`..${sep}`) &&
+    !isAbsolute(pathFromParent)
+  );
+}
+
+function resolveInstalledPackageBin(
+  root: string,
+  packageName: string,
+  binName: string,
+): string | undefined {
+  try {
+    const requireFromProject = createRequire(resolve(root, "package.json"));
+    const packageJsonPath = requireFromProject.resolve(`${packageName}/package.json`);
+    const manifest = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+      bin?: string | Record<string, string>;
+    };
+    const relativeBin =
+      typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.[binName];
+    if (!relativeBin) {
+      return undefined;
+    }
+    const binPath = resolve(dirname(packageJsonPath), relativeBin);
+    return isRegularFile(binPath) ? binPath : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function isHelp(value: string): boolean {
   return value === "--help" || value === "-h";
 }
@@ -1252,10 +1348,9 @@ async function withContractsModule<T>(
   try {
     return useContracts(await importContractsDist());
   } catch (error) {
-    throw new Error(
-      "Could not load compiled @bmkl/contracts after typia transform fallback.",
-      { cause: error },
-    );
+    throw new Error("Could not load compiled @bmkl/contracts after typia transform fallback.", {
+      cause: error,
+    });
   }
 }
 

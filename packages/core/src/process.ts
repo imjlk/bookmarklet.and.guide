@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
 
 export interface RunCommandOptions {
   cwd: string;
@@ -15,7 +18,7 @@ export async function runCommand(
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: { ...process.env, ...options.env },
-      shell: process.platform === "win32",
+      shell: false,
       stdio: options.quiet
         ? ["inherit", process.stderr, process.stderr]
         : "inherit",
@@ -34,4 +37,37 @@ export async function runCommand(
       }
     });
   });
+}
+
+export async function runPackageBin(
+  packageName: string,
+  binName: string,
+  args: string[],
+  options: RunCommandOptions,
+): Promise<void> {
+  const requireFromProject = createRequire(resolve(options.cwd, "package.json"));
+  let packageJsonPath: string;
+  try {
+    packageJsonPath = requireFromProject.resolve(`${packageName}/package.json`);
+  } catch (error) {
+    throw new Error(
+      `Could not resolve ${packageName} from ${options.cwd}. Install project dependencies first.`,
+      { cause: error },
+    );
+  }
+
+  const manifest = JSON.parse(await readFile(packageJsonPath, "utf8")) as {
+    bin?: string | Record<string, string>;
+  };
+  const relativeBin =
+    typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.[binName];
+  if (!relativeBin) {
+    throw new Error(`Package ${packageName} does not declare the ${binName} executable.`);
+  }
+
+  await runCommand(
+    process.execPath,
+    [resolve(dirname(packageJsonPath), relativeBin), ...args],
+    options,
+  );
 }

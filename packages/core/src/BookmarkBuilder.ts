@@ -2,25 +2,14 @@ import { execFile } from "node:child_process";
 import { readFile, rm, stat } from "node:fs/promises";
 import type { ServerOptions as HttpsServerOptions } from "node:https";
 import { basename, join, relative } from "node:path";
-import {
-  parseBmklRemoteManifestJson,
-  stringifyBmklRemoteManifest,
-} from "@bmkl/contracts";
-import {
-  createServer,
-  build as viteBuild,
-  mergeConfig,
-  type ViteDevServer,
-} from "vite";
+import { parseBmklRemoteManifestJson, stringifyBmklRemoteManifest } from "@bmkl/contracts";
+import { createServer, build as viteBuild, mergeConfig, type ViteDevServer } from "vite";
 import { buildCompanionExtension } from "./companion.js";
 import { installDebugConsoleMiddleware } from "./debug-console.js";
-import {
-  addDebugToken,
-  hasValidDebugToken,
-  loadOrCreateDebugToken,
-} from "./debug-token.js";
+import { addDebugToken, hasValidDebugToken, loadOrCreateDebugToken } from "./debug-token.js";
 import { toBookmarklet } from "./encoder.js";
 import { createInstallPage } from "./install-page.js";
+import { createDevSetupPage } from "./dev-setup.js";
 import {
   createBookmarkletLoader,
   createDebugDevBookmarkletSource,
@@ -39,7 +28,7 @@ import {
   toOutputFileName,
   writeTextFile,
 } from "./path.js";
-import { runCommand } from "./process.js";
+import { runPackageBin } from "./process.js";
 import { createBuildReport } from "./report.js";
 import type {
   BookmarkletArtifact,
@@ -87,18 +76,13 @@ export class BookmarkBuilder {
     const bookmarkletSource =
       this.config.runtime === "inline"
         ? appCode
-        : createBookmarkletLoader(
-            `${this.loaderDomId()}__bookmarklet`,
-            remoteUrls.loader,
-          );
+        : createBookmarkletLoader(`${this.loaderDomId()}__bookmarklet`, remoteUrls.loader);
     const bookmarkletUrl = toBookmarklet(bookmarkletSource);
     const manifest = createManifest(this.config, appCode);
 
     const artifacts: BookmarkletArtifact[] = [];
     artifacts.push(await this.artifact("app", paths.remoteApp));
-    artifacts.push(
-      await this.writeArtifact("loader", paths.remoteLoader, loaderSource, true),
-    );
+    artifacts.push(await this.writeArtifact("loader", paths.remoteLoader, loaderSource, true));
 
     if (this.config.output?.manifest !== false) {
       artifacts.push(
@@ -173,10 +157,55 @@ export class BookmarkBuilder {
       `${options.https ? "https" : "http"}://${options.host ?? "127.0.0.1"}:${options.port ?? 5173}/`;
     const currentAddress = () => devAddress || addressFallback();
     const launcherPath = "/__bmkl/launcher.js";
+    const setupPath = "/__bmkl/setup";
+    const setupOpenPath = debugToken
+      ? `${setupPath}?token=${encodeURIComponent(debugToken)}`
+      : setupPath;
     const devCors = createDevCorsOption(options.target);
-    const httpsOptions = options.https
-      ? await this.createDevHttpsOptions()
-      : undefined;
+    const httpsOptions = options.https ? await this.createDevHttpsOptions() : undefined;
+    const createDevLinks = (baseAddress = currentAddress()) => {
+      const launcherUrl = new URL(
+        launcherPath.replace(/^\//, ""),
+        baseAddress,
+      ).toString();
+      const debugLauncherUrl = debugToken
+        ? addDebugToken(
+            new URL(
+              `${launcherPath.replace(/^\//, "")}?debug=1`,
+              baseAddress,
+            ).toString(),
+            debugToken,
+          )
+        : undefined;
+      const launcherBookmarkletUrl = toBookmarklet(
+        createDevLauncherBookmarkletSource(`${this.loaderDomId()}__dev_launcher`, launcherUrl),
+      );
+      const debugLauncherBookmarkletUrl = debugLauncherUrl
+        ? toBookmarklet(
+            createDevLauncherBookmarkletSource(
+              `${this.loaderDomId()}__debug_launcher`,
+              debugLauncherUrl,
+            ),
+          )
+        : undefined;
+      const debugConsoleUrl = debugToken
+        ? addDebugToken(new URL("__bmkl/debug", baseAddress).toString(), debugToken)
+        : undefined;
+      const rawSetupUrl = new URL(
+        setupPath.replace(/^\//, ""),
+        baseAddress,
+      ).toString();
+      const setupUrl = debugToken ? addDebugToken(rawSetupUrl, debugToken) : rawSetupUrl;
+
+      return {
+        debugConsoleUrl,
+        debugLauncherBookmarkletUrl,
+        debugLauncherUrl,
+        launcherBookmarkletUrl,
+        launcherUrl,
+        setupUrl,
+      };
+    };
 
     const server = await createServer({
       root: this.config.root,
@@ -187,7 +216,12 @@ export class BookmarkBuilder {
               {
                 name: "bmkl:debug-auth-guard",
                 configureServer: (viteServer: ViteDevServer) => {
-                  installDebugAuthGuard(viteServer, debugToken, launcherPath);
+                  installDebugAuthGuard(
+                    viteServer,
+                    debugToken,
+                    launcherPath,
+                    setupPath,
+                  );
                 },
               },
               {
@@ -202,13 +236,46 @@ export class BookmarkBuilder {
           name: "bmkl:dev-launcher",
           configureServer: (viteServer: ViteDevServer) => {
             viteServer.middlewares.use((req, res, next) => {
-              const url = new URL(req.url ?? "/", currentAddress());
+              const requestAddress = resolveRequestDevAddress(
+                viteServer.resolvedUrls,
+                req.headers.host,
+                currentAddress(),
+              );
+              const url = new URL(req.url ?? "/", requestAddress);
+              if (url.pathname === setupPath) {
+                if (req.method !== "GET" && req.method !== "HEAD") {
+                  res.statusCode = 405;
+                  res.setHeader("allow", "GET, HEAD");
+                  res.end("Method Not Allowed");
+                  return;
+                }
+                const links = createDevLinks(requestAddress);
+                const page = createDevSetupPage({
+                  appName: this.config.name,
+                  debugConsoleUrl: links.debugConsoleUrl,
+                  debugLauncherBookmarkletUrl:
+                    links.debugLauncherBookmarkletUrl,
+                  launcherBookmarkletUrl: links.launcherBookmarkletUrl,
+                  target: options.target,
+                });
+                res.statusCode = 200;
+                res.setHeader("content-type", "text/html; charset=utf-8");
+                res.setHeader("cache-control", "no-store");
+                res.setHeader(
+                  "content-security-policy",
+                  "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'",
+                );
+                res.setHeader("referrer-policy", "no-referrer");
+                res.setHeader("x-content-type-options", "nosniff");
+                res.end(req.method === "HEAD" ? undefined : page);
+                return;
+              }
               if (url.pathname !== launcherPath) {
                 next();
                 return;
               }
 
-              const moduleUrl = new URL(this.config.entry, currentAddress()).toString();
+              const moduleUrl = new URL(this.config.entry, requestAddress).toString();
               const debugRequested =
                 url.searchParams.get("debug") === "1" ||
                 url.searchParams.get("mode") === "debug";
@@ -221,12 +288,9 @@ export class BookmarkBuilder {
                 res.end();
                 return;
               }
-              const debugConsoleUrl = debugToken
-                ? addDebugToken(
-                    new URL("__bmkl/debug", currentAddress()).toString(),
-                    debugToken,
-                  )
-                : new URL("__bmkl/debug", currentAddress()).toString();
+              const debugConsoleUrl =
+                createDevLinks(requestAddress).debugConsoleUrl ??
+                new URL("__bmkl/debug", requestAddress).toString();
               const source =
                 debugRequested && debugToken
                   ? createDebugDevBookmarkletSource({
@@ -271,35 +335,21 @@ export class BookmarkBuilder {
         port: options.port ?? 5173,
         strictPort: options.strictPort ?? false,
         https: httpsOptions,
-        open: options.open ?? false,
+        open: options.open ? setupOpenPath : false,
       },
     });
 
     await server.listen();
-    const address = server.resolvedUrls?.local[0] ?? "http://127.0.0.1:5173/";
+    const address =
+      server.resolvedUrls?.local[0] ??
+      server.resolvedUrls?.network[0] ??
+      addressFallback();
     devAddress = address;
     const moduleUrl = new URL(this.config.entry, address).toString();
-    const launcherUrl = new URL(launcherPath.replace(/^\//, ""), address).toString();
-    const debugLauncherUrl = debugToken
-      ? addDebugToken(
-          new URL(`${launcherPath.replace(/^\//, "")}?debug=1`, address).toString(),
-          debugToken,
-        )
-      : undefined;
-    const launcherBookmarkletUrl = toBookmarklet(
-      createDevLauncherBookmarkletSource(
-        `${this.loaderDomId()}__dev_launcher`,
-        launcherUrl,
-      ),
+    const links = createDevLinks(address);
+    const networkSetupUrls = (server.resolvedUrls?.network ?? []).map(
+      (networkAddress) => createDevLinks(networkAddress).setupUrl,
     );
-    const debugLauncherBookmarkletUrl = debugLauncherUrl
-      ? toBookmarklet(
-          createDevLauncherBookmarkletSource(
-            `${this.loaderDomId()}__debug_launcher`,
-            debugLauncherUrl,
-          ),
-        )
-      : undefined;
     const bookmarkletUrl = toBookmarklet(
       createDevBookmarkletSource(
         `${this.loaderDomId()}__dev`,
@@ -307,17 +357,14 @@ export class BookmarkBuilder {
         this.config.globalName,
       ),
     );
-    const debugConsoleUrl = debugToken
-      ? addDebugToken(new URL("__bmkl/debug", address).toString(), debugToken)
-      : undefined;
     const debugBookmarkletUrl =
-      debugToken && debugConsoleUrl
+      debugToken && links.debugConsoleUrl
         ? toBookmarklet(
             createDebugDevBookmarkletSource({
               id: `${this.loaderDomId()}__debug_dev`,
               moduleUrl,
               globalName: this.config.globalName,
-              debugConsoleUrl,
+              debugConsoleUrl: links.debugConsoleUrl,
               target: options.target,
             }),
           )
@@ -326,12 +373,14 @@ export class BookmarkBuilder {
     return {
       close: () => server.close(),
       bookmarkletUrl,
-      launcherBookmarkletUrl,
-      launcherUrl,
+      launcherBookmarkletUrl: links.launcherBookmarkletUrl,
+      launcherUrl: links.launcherUrl,
       debugBookmarkletUrl,
-      debugConsoleUrl,
-      debugLauncherBookmarkletUrl,
-      debugLauncherUrl,
+      debugConsoleUrl: links.debugConsoleUrl,
+      debugLauncherBookmarkletUrl: links.debugLauncherBookmarkletUrl,
+      debugLauncherUrl: links.debugLauncherUrl,
+      networkSetupUrls,
+      setupUrl: links.setupUrl,
       target: options.target,
       url: address,
     };
@@ -375,9 +424,7 @@ export class BookmarkBuilder {
     }
 
     const primaryBookmarklet =
-      this.config.runtime === "inline"
-        ? paths.inlineBookmarklet
-        : paths.remoteBookmarklet;
+      this.config.runtime === "inline" ? paths.inlineBookmarklet : paths.remoteBookmarklet;
     try {
       bookmarkletLength = (await readFile(primaryBookmarklet, "utf8")).trim()
         .length;
@@ -386,9 +433,7 @@ export class BookmarkBuilder {
     }
 
     const inspectedPaths = new Set(artifacts.map((artifact) => artifact.path));
-    const manifest = manifestEnabled
-      ? await readManifest(paths.remoteManifest)
-      : undefined;
+    const manifest = manifestEnabled ? await readManifest(paths.remoteManifest) : undefined;
     if (
       manifestEnabled &&
       inspectedPaths.has(paths.remoteManifest) &&
@@ -429,8 +474,9 @@ export class BookmarkBuilder {
       return;
     }
 
+    const project = this.config.ttsc.project ?? "tsconfig.json";
     try {
-      await runCommand("ttsc", ["--version"], {
+      await runPackageBin("ttsc", "ttsc", ["prepare", "--project", project], {
         cwd: this.config.root,
         quiet: options.quiet,
       });
@@ -449,7 +495,7 @@ export class BookmarkBuilder {
 
     const project = this.config.ttsc.project ?? "tsconfig.json";
     try {
-      await runCommand("ttsc", ["--noEmit", "--project", project], {
+      await runPackageBin("ttsc", "ttsc", ["--noEmit", "--project", project], {
         cwd: this.config.root,
         quiet: options.quiet,
       });
@@ -719,6 +765,7 @@ function installDebugAuthGuard(
   server: ViteDevServer,
   token: string,
   launcherPath: string,
+  setupPath: string,
 ): void {
   server.middlewares.use((req, res, next) => {
     const url = new URL(req.url ?? "/", "http://bmkl.local");
@@ -729,6 +776,7 @@ function installDebugAuthGuard(
     const protectedEndpoint =
       url.pathname === "/__bmkl/debug" ||
       url.pathname === "/__bmkl/debug/events" ||
+      url.pathname === setupPath ||
       debugLauncherRequested;
 
     if (!protectedEndpoint) {
@@ -743,6 +791,43 @@ function installDebugAuthGuard(
 
     next();
   });
+}
+
+function resolveRequestDevAddress(
+  resolvedUrls: ViteDevServer["resolvedUrls"],
+  requestHost: string | undefined,
+  fallback: string,
+): string {
+  const candidates = [
+    ...(resolvedUrls?.local ?? []),
+    ...(resolvedUrls?.network ?? []),
+  ];
+  const normalizedRequestHost = normalizeRequestHost(requestHost);
+  if (normalizedRequestHost) {
+    const requestedAddress = candidates.find((candidate) => {
+      try {
+        return new URL(candidate).host === normalizedRequestHost;
+      } catch {
+        return false;
+      }
+    });
+    if (requestedAddress) {
+      return requestedAddress;
+    }
+  }
+  return candidates[0] ?? fallback;
+}
+
+function normalizeRequestHost(host: string | undefined): string | undefined {
+  if (!host || /[\\/?#@\s]/.test(host)) {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(`http://${host}`);
+    return parsed.username || parsed.password ? undefined : parsed.host;
+  } catch {
+    return undefined;
+  }
 }
 
 function installDevCorsMiddleware(

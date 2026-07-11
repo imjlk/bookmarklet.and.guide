@@ -80,6 +80,16 @@ test("build preserves config defaults and deep-merges nested CLI overrides", asy
       decodeURIComponent(await readFile(remoteBookmarkletPath, "utf8")),
       /https:\/\/cdn\.override\.test\/releases\/token=a=b\/custom-loader\.js/,
     );
+
+    const plain = runCli(["build"], {
+      cwd: root,
+      env: withPath(binDir),
+    });
+    assert.equal(plain.status, 0, plain.stderr);
+    assert.match(
+      plain.stdout,
+      /Bookmarklet file: dist[\\/]custom[\\/]remote[\\/]custom-bookmarklet\.txt/,
+    );
   });
 });
 
@@ -102,6 +112,22 @@ test("JSON and raw build modes keep stdout machine-readable", async () => {
     assert.match(rawResult.stdout, /^javascript:[^\n]+\n$/);
     assert.doesNotMatch(rawResult.stdout, /ttsc fixture output|vite v/i);
     assert.match(rawResult.stderr, /ttsc fixture output/);
+  });
+});
+
+test("build prepares the configured ttsc project before bundling", async () => {
+  await withBuildProject(async ({ binDir, root }) => {
+    const marker = join(root, "ttsc-args.txt");
+    const result = runCli(["build", "--json"], {
+      cwd: root,
+      env: { ...withPath(binDir), BMKL_TTSC_MARKER: marker },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      (await readFile(marker, "utf8")).trim(),
+      "prepare --project tsconfig.json",
+    );
   });
 });
 
@@ -137,6 +163,16 @@ test("reported CLI version comes from package metadata", async () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), manifest.version);
+});
+
+test("root help stays scannable and points to detailed command help", () => {
+  const result = runCli(["--help"]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Commands:/);
+  assert.match(result.stdout, /bmkl templates/);
+  assert.match(result.stdout, /bmkl <command> --help/);
+  assert.doesNotMatch(result.stdout, /Best for:|After npm publication/);
 });
 
 for (const bootstrapAgent of ["npm/11.0.0", "bun/1.2.0", "yarn/4.0.0"]) {
@@ -188,6 +224,49 @@ test("bmkl create local mode emits installable source-package overrides", async 
     );
     assert.match(workspace, /"@bmkl\/contracts": "file:/);
     assert.match(workspace, /"@bmkl\/templates": "file:/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("bmkl create quotes its destination and explains a missing pnpm prerequisite", async () => {
+  const root = await mkdtemp(join(tmpdir(), "bmkl-cli-create-path-test-"));
+  const destination = "project's panel";
+  try {
+    const result = runCli(
+      ["create", destination, "--template", "vanilla-shadow"],
+      {
+        cwd: root,
+        env: { PATH: "", npm_config_user_agent: "npm/11.0.0" },
+      },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    const changeDirectory =
+      process.platform === "win32"
+        ? "Set-Location -LiteralPath 'project''s panel'"
+        : "cd 'project'\"'\"'s panel'";
+    assert.match(result.stdout, new RegExp(`  ${escapeRegExp(changeDirectory)}`));
+    assert.match(result.stdout, /Prerequisite: install or enable pnpm@/);
+    await readFile(join(root, destination, "package.json"), "utf8");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("bmkl create prints a usable cd path for a dash-leading directory", async () => {
+  const root = await mkdtemp(join(tmpdir(), "bmkl-cli-create-dash-test-"));
+  try {
+    const result = runCli(["create", "--", "-panel"], { cwd: root });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(
+      result.stdout,
+      process.platform === "win32"
+        ? /  Set-Location -LiteralPath '-panel'/
+        : /  cd \.\/-panel/,
+    );
+    await readFile(join(root, "-panel", "package.json"), "utf8");
   } finally {
     await rm(root, { force: true, recursive: true });
   }
@@ -251,6 +330,25 @@ test("doctor skips disabled ttsc checks and ignores remote config for inline run
     });
     assert.equal(findCheck(report, "remote-base-url").status, "pass");
     await assert.rejects(readFile(marker, "utf8"), { code: "ENOENT" });
+  });
+});
+
+test("doctor executes the project-local ttsc launcher", async () => {
+  await withBuildProject(async ({ root }) => {
+    await writeFile(
+      join(root, "node_modules", "ttsc", "fixture.mjs"),
+      "console.error('broken ttsc fixture'); process.exit(1);\n",
+    );
+    await writeFile(join(root, "tsconfig.json"), "{}\n");
+
+    const result = runCli(["doctor", "--json"], { cwd: root });
+
+    assert.equal(result.status, 1);
+    assert.deepEqual(findCheck(JSON.parse(result.stdout), "ttsc-binary"), {
+      name: "ttsc-binary",
+      status: "fail",
+      message: "Could not run the project-local ttsc --version",
+    });
   });
 });
 
@@ -380,6 +478,7 @@ test("inline short-option values preserve additional equals signs", () => {
 test("commands reject unknown options, missing values, and extra positionals", async (t) => {
   const cases = [
     [["templates", "--unknown"], /Unknown option: --unknown/],
+    [["create"], /Missing project directory\. Usage: bmkl create <dir>/],
     [["create", "one", "two"], /Unexpected argument: two/],
     [["build", "--runtime"], /Missing value for --runtime/],
     [["inspect", "extra"], /Unexpected argument: extra/],
@@ -433,12 +532,40 @@ function findCheck(report, name) {
   return check;
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function withBuildProject(useProject) {
   const root = await mkdtemp(join(tmpdir(), "bmkl-cli-test-"));
   const binDir = join(root, "bin");
   try {
     await mkdir(join(root, "src"), { recursive: true });
     await mkdir(binDir, { recursive: true });
+    const ttscPackageRoot = join(root, "node_modules", "ttsc");
+    await mkdir(ttscPackageRoot, { recursive: true });
+    await writeFile(
+      join(ttscPackageRoot, "package.json"),
+      `${JSON.stringify(
+        {
+          name: "ttsc",
+          version: "0.0.0-fixture",
+          type: "module",
+          bin: { ttsc: "fixture.mjs" },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    await writeFile(
+      join(ttscPackageRoot, "fixture.mjs"),
+      `import { writeFileSync } from "node:fs";
+if (process.env.BMKL_TTSC_MARKER) {
+  writeFileSync(process.env.BMKL_TTSC_MARKER, process.argv.slice(2).join(" "));
+}
+console.log("ttsc fixture output");
+`,
+    );
     await writeFile(
       join(root, "src/inject.ts"),
       "export function run() { return 'fixture'; }\n",
@@ -482,8 +609,8 @@ async function withBuildProject(useProject) {
     await writeFile(
       ttscPath,
       process.platform === "win32"
-        ? '@if not "%BMKL_TTSC_MARKER%"=="" echo ran>"%BMKL_TTSC_MARKER%"\r\n@echo ttsc fixture output\r\n'
-        : '#!/bin/sh\nif [ -n "$BMKL_TTSC_MARKER" ]; then printf ran > "$BMKL_TTSC_MARKER"; fi\necho "ttsc fixture output"\n',
+        ? '@if not "%BMKL_TTSC_MARKER%"=="" echo %*>"%BMKL_TTSC_MARKER%"\r\n@echo ttsc fixture output\r\n'
+        : '#!/bin/sh\nif [ -n "$BMKL_TTSC_MARKER" ]; then printf "%s" "$*" > "$BMKL_TTSC_MARKER"; fi\necho "ttsc fixture output"\n',
     );
     if (process.platform !== "win32") {
       await chmod(ttscPath, 0o755);

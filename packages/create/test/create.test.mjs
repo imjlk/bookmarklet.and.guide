@@ -10,6 +10,7 @@ const execFileAsync = promisify(execFile);
 const cliPath = new URL("../dist/index.js", import.meta.url);
 
 test("create-bmkl rejects unknown options, missing values, and extra targets", async () => {
+  await assertCliFailure([], /Missing project directory\. Usage: create-bmkl <dir>/);
   await assertCliFailure(["--wat"], /Unknown option: --wat/);
   await assertCliFailure(["--template"], /Option requires a value: --template/);
   await assertCliFailure(["one", "two"], /Unexpected argument: two/);
@@ -29,6 +30,55 @@ test("create-bmkl rejects unknown options, missing values, and extra targets", a
     ["app", "-t=vanilla-shadow=unexpected"],
     /Unknown template: vanilla-shadow=unexpected/,
   );
+  await assertCliFailure(
+    ["--version", "--template", "vanilla-shadow"],
+    /Option --template cannot be used with --version/,
+  );
+  await assertCliFailure(
+    ["--templates", "--force"],
+    /Option --force cannot be used with --templates/,
+  );
+  await assertCliFailure(
+    ["--templates", "--list-templates"],
+    /Use either --templates or --list-templates, not both/,
+  );
+});
+
+test("create-bmkl help includes an explicit destination usage contract", async () => {
+  const { stdout } = await execFileAsync(process.execPath, [
+    cliPath.pathname,
+    "app",
+    "--help",
+    "--template",
+    "missing",
+  ]);
+
+  assert.match(stdout, /Usage:\s+create-bmkl <dir> \[options\]/);
+});
+
+test("disabled mode flags behave as absent during project creation", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "create-bmkl-false-mode-test-"));
+
+  try {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        cliPath.pathname,
+        "app",
+        "--json",
+        "--templates=false",
+        "--help=false",
+        "--version=false",
+        "--template",
+        "vanilla-shadow",
+      ],
+      { cwd: tempRoot },
+    );
+
+    assert.equal(JSON.parse(stdout).template.name, "vanilla-shadow");
+  } finally {
+    await rm(tempRoot, { force: true, recursive: true });
+  }
 });
 
 test("create-bmkl reports package metadata as its version", async () => {
@@ -46,6 +96,7 @@ test("create-bmkl emits structured JSON errors", async () => {
   for (const args of [
     ["--json", "--wat"],
     ["--", "--json", "--wat"],
+    ["--json"],
     ["app", "--json", "--template=missing"],
   ]) {
     await assert.rejects(
@@ -60,6 +111,58 @@ test("create-bmkl emits structured JSON errors", async () => {
         return true;
       },
     );
+  }
+});
+
+test("create-bmkl quotes its destination and explains a missing pnpm prerequisite", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "create-bmkl-path-test-"));
+  const destination = "project's panel";
+
+  try {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [cliPath.pathname, destination, "--template", "vanilla-shadow"],
+      {
+        cwd: tempRoot,
+        env: {
+          ...process.env,
+          PATH: "",
+          npm_config_user_agent: "npm/11.0.0",
+        },
+      },
+    );
+    const changeDirectory =
+      process.platform === "win32"
+        ? "Set-Location -LiteralPath 'project''s panel'"
+        : "cd 'project'\"'\"'s panel'";
+
+    assert.match(stdout, new RegExp(`  ${escapeRegExp(changeDirectory)}`));
+    assert.match(stdout, /Prerequisite: install or enable pnpm@/);
+    await readFile(join(tempRoot, destination, "package.json"), "utf8");
+  } finally {
+    await rm(tempRoot, { force: true, recursive: true });
+  }
+});
+
+test("create-bmkl prints a usable cd path for a dash-leading directory", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "create-bmkl-dash-test-"));
+
+  try {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [cliPath.pathname, "./-panel", "--template", "vanilla-shadow"],
+      { cwd: tempRoot },
+    );
+
+    assert.match(
+      stdout,
+      process.platform === "win32"
+        ? /  Set-Location -LiteralPath '\.\/-panel'/
+        : /  cd \.\/-panel/,
+    );
+    await readFile(join(tempRoot, "-panel", "package.json"), "utf8");
+  } finally {
+    await rm(tempRoot, { force: true, recursive: true });
   }
 });
 
@@ -152,4 +255,8 @@ async function assertCliFailure(args, messagePattern) {
       return true;
     },
   );
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

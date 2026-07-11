@@ -167,20 +167,19 @@ preview page. Run these commands from a generated project root:
 pnpm exec bmkl dev --debug --target https://example.com
 ```
 
-The command prints both a normal dev bookmarklet and a debug bookmarklet. Use
-the debug bookmarklet when the bug only appears on the real site.
-
-It also prints install-once launcher bookmarklets. Prefer those during active
-development: the bookmark stays the same while the dev host and port stay the
-same, and each click fetches the latest launcher script from the local dev
-server.
+The command prints a local **Setup** URL. Open it and drag the normal or debug
+install-once link to your bookmarks bar; a Copy URL action is available when
+dragging is inconvenient. The bookmark stays the same while the dev host and
+port stay the same, and each click fetches the latest launcher script from the
+local dev server. Pass `--print-bookmarklets` only when a script or advanced
+workflow needs the raw URLs in the terminal.
 
 Exact test flow:
 
 ```text
 1. Run pnpm exec bmkl dev --debug --target <site>.
-2. Open the real target site in your browser.
-3. Create a bookmark named BMKL debug with the printed install-once debug bookmarklet URL.
+2. Open the printed Setup URL and drag BMKL debug to your bookmarks bar.
+3. Open the real target site in your browser.
 4. Click BMKL debug while the target site tab is active.
 5. Keep the localhost debug console window open when the popup is available.
 6. Reproduce the issue on the target site.

@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import {
   DEFAULT_TEMPLATE,
@@ -48,17 +49,28 @@ async function main(argv: string[]): Promise<void> {
 
   assertValidPositionals(args);
 
-  if (flagBoolean(args, "version")) {
-    console.log(VERSION);
-    return;
-  }
-
   if (flagBoolean(args, "help")) {
     printHelp();
     return;
   }
 
-  if (flagBoolean(args, "templates") || flagBoolean(args, "list-templates")) {
+  if (flagBoolean(args, "version")) {
+    assertOnlyOptions(args, ["version"], "--version");
+    console.log(VERSION);
+    return;
+  }
+
+  const templatesMode = flagBoolean(args, "templates");
+  const listTemplatesMode = flagBoolean(args, "list-templates");
+  if (templatesMode && listTemplatesMode) {
+    throw new Error("Use either --templates or --list-templates, not both.");
+  }
+  if (templatesMode || listTemplatesMode) {
+    assertOnlyOptions(
+      args,
+      [templatesMode ? "templates" : "list-templates", "json"],
+      templatesMode ? "--templates" : "--list-templates",
+    );
     const templates = await listTemplateInfos();
     if (flagBoolean(args, "json")) {
       console.log(JSON.stringify(templates, null, 2));
@@ -68,7 +80,11 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
-  const target = args.positionals[0] ?? ".";
+  assertOnlyOptions(args, ["force", "json", "local", "template"], "project creation");
+  const target = args.positionals[0];
+  if (!target) {
+    throw new Error("Missing project directory. Usage: create-bmkl <dir>");
+  }
   const result = await createProject({
     destination: resolve(process.cwd(), target),
     force: flagBoolean(args, "force"),
@@ -81,7 +97,7 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
-  printCreateResult(result);
+  printCreateResult(result, target);
 }
 
 function parseArgs(
@@ -155,10 +171,7 @@ function splitOptionArgument(
   const equalsIndex = argument.indexOf("=", prefixLength);
   return equalsIndex === -1
     ? [argument.slice(prefixLength), undefined]
-    : [
-        argument.slice(prefixLength, equalsIndex),
-        argument.slice(equalsIndex + 1),
-      ];
+    : [argument.slice(prefixLength, equalsIndex), argument.slice(equalsIndex + 1)];
 }
 
 function assertKnownOption(
@@ -206,8 +219,7 @@ function assertValidPositionals(args: ParsedArgs): void {
   }
   if (
     args.positionals.length > 0 &&
-    (flagBoolean(args, "help") ||
-      flagBoolean(args, "version") ||
+    (flagBoolean(args, "version") ||
       flagBoolean(args, "templates") ||
       flagBoolean(args, "list-templates"))
   ) {
@@ -215,9 +227,25 @@ function assertValidPositionals(args: ParsedArgs): void {
   }
 }
 
+function assertOnlyOptions(
+  args: ParsedArgs,
+  allowedNames: string[],
+  mode: string,
+): void {
+  const allowed = new Set(allowedNames);
+  for (const [name, value] of args.flags) {
+    if (value !== false && !allowed.has(name)) {
+      throw new Error(`Option --${name} cannot be used with ${mode}.`);
+    }
+  }
+}
+
 function printHelp(): void {
   console.log(`create-bmkl ${VERSION}`);
   console.log("Create a Vite bookmarklet project from a bmkl template.");
+  console.log("");
+  console.log("Usage:");
+  console.log("  create-bmkl <dir> [options]");
   console.log("");
   console.log("Source checkout:");
   console.log(
@@ -242,7 +270,10 @@ function printHelp(): void {
   console.log("  -v, --version           Print version");
 }
 
-function printCreateResult(result: CreateProjectResult): void {
+function printCreateResult(
+  result: CreateProjectResult,
+  destinationArgument: string,
+): void {
   console.log(
     `Created ${result.template.name} (${result.template.title}) at ${result.destination}`,
   );
@@ -252,13 +283,48 @@ function printCreateResult(result: CreateProjectResult): void {
   );
   console.log("");
   console.log("Next:");
-  console.log(`  cd ${result.destination}`);
+  printChangeDirectory(destinationArgument);
+  printPnpmPrerequisite(result.packageManager);
   console.log("  pnpm install");
   console.log("  pnpm dev");
   console.log("");
   console.log("Build artifacts:");
   console.log("  pnpm build");
   console.log("  pnpm inspect");
+}
+
+function printPnpmPrerequisite(packageManager: string): void {
+  const probe = spawnSync(
+    process.platform === "win32" ? "where.exe" : "pnpm",
+    process.platform === "win32" ? ["pnpm"] : ["--version"],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    },
+  );
+  if (probe.status === 0) {
+    return;
+  }
+  console.log(
+    `  # Prerequisite: install or enable ${packageManager} (for example: corepack enable)`,
+  );
+}
+
+function printChangeDirectory(value: string): void {
+  if (process.platform === "win32") {
+    console.log("  # Windows PowerShell");
+    console.log(
+      `  Set-Location -LiteralPath '${value.replaceAll("'", "''")}'`,
+    );
+    return;
+  }
+
+  const shellPath = value.startsWith("-") ? `./${value}` : value;
+  if (/^[a-zA-Z0-9_./:@+-]+$/.test(shellPath)) {
+    console.log(`  cd ${shellPath}`);
+    return;
+  }
+  console.log(`  cd '${shellPath.replaceAll("'", `'"'"'`)}'`);
 }
 
 function printTemplateInfos(templates: TemplateInfo[]): void {

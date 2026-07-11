@@ -1,9 +1,5 @@
 export const BOOKMARKLET_RUNTIME_CHOICES = ["inline", "remote"] as const;
-export const BOOKMARKLET_UI_MODE_CHOICES = [
-  "shadow",
-  "iframe",
-  "none",
-] as const;
+export const BOOKMARKLET_UI_MODE_CHOICES = ["shadow", "iframe", "none"] as const;
 export const BOOKMARKLET_UPDATE_CHANNEL_CHOICES = [
   "dev",
   "canary",
@@ -104,6 +100,8 @@ export interface DevServerResult {
   debugLauncherUrl?: string;
   launcherBookmarkletUrl: string;
   launcherUrl: string;
+  networkSetupUrls: string[];
+  setupUrl: string;
   target?: string;
   url: string;
 }
