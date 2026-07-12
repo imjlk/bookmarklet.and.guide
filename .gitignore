@@ -6,6 +6,7 @@ dist/
 .bmkl-dev-cert/
 *.tsbuildinfo
 .DS_Store
+mise.local.toml
 coverage/
 .playwright-cli/
 .playwright-mcp/
