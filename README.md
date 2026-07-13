@@ -272,6 +272,39 @@ a direct upload cannot accidentally reuse a stale local bundle.
 Advanced mode requires `_worker.js` in the Pages output directory. A TypeScript
 worker must be compiled to that filename before deploy.
 
+### Production deployment
+
+`.github/workflows/deploy-web.yml` deploys the site after a web-related change
+lands on `main`. It also supports a manual run from `main`. The workflow
+typechecks and builds the web app, verifies the Pages advanced-mode files, and
+then uploads `apps/web/dist` to the `bookmarklet-and-guide` Pages project.
+Pull requests use the regular CI build and never receive production credentials.
+
+Complete these one-time setup steps before enabling production deployment:
+
+1. Create the Direct Upload project with `main` as its production branch:
+
+   ```bash
+   pnpm --filter @bmkl/web exec wrangler pages project create bookmarklet-and-guide \
+     --production-branch main
+   ```
+
+2. Add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as secrets for the
+   repository or its `production` environment. Limit the token to **Account /
+   Cloudflare Pages / Edit** for the account that owns the project.
+3. In Pages, attach `bookmarklet.and.guide` as a custom domain and finish the
+   requested DNS change. The Actions workflow publishes Pages assets; it does
+   not move the existing domain automatically.
+
+The workflow pins every action to an immutable commit. Keep the version comments
+and SHAs together when updating them. Inspect deploy history before selecting a
+prior deployment for rollback in the Cloudflare dashboard:
+
+```bash
+pnpm --filter @bmkl/web exec wrangler pages deployment list \
+  --project-name bookmarklet-and-guide
+```
+
 ## Package release safeguards
 
 Public packages declare their Node requirement and public scoped-package
