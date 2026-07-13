@@ -115,12 +115,22 @@ for (const template of TEMPLATE_NAMES) {
       assert.doesNotMatch(JSON.stringify(manifest), /workspace:/);
 
       const previewHtml = await readFile(join(destination, "index.html"), "utf8");
+      assert.doesNotMatch(
+        previewHtml,
+        /\r/,
+        `${template} generated HTML must use LF line endings`,
+      );
       assert.match(previewHtml, /src="\/src\/preview\.ts"/);
       assert.match(previewHtml, /<title>App preview<\/title>/);
       assert.match(previewHtml, /data-preview-run/);
       const previewEntry = await readFile(
         join(destination, "src", "preview.ts"),
         "utf8",
+      );
+      assert.doesNotMatch(
+        previewEntry,
+        /\r/,
+        `${template} generated text must use LF line endings`,
       );
       assert.match(previewEntry, /import \{ run \} from "\.\/inject\.js";/);
       assert.match(previewEntry, /\[data-preview-run\]/);
@@ -129,6 +139,11 @@ for (const template of TEMPLATE_NAMES) {
       const panelConfig = await readFile(
         join(destination, "src", "panel.config.ts"),
         "utf8",
+      );
+      assert.doesNotMatch(
+        panelConfig,
+        /\r/,
+        `${template} generated config must use LF line endings`,
       );
       assert.match(panelConfig, /title: "App"/);
       assert.match(panelConfig, /event\.key !== "Escape"/);

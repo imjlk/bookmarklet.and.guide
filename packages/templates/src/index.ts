@@ -523,6 +523,7 @@ function applyReplacements(
   replacements: TemplateReplacements,
 ): string {
   return text
+    .replace(/\r\n?/g, "\n")
     .replaceAll("__BMKL_VERSION__", replacements.bmklVersion)
     .replaceAll("__BMKL_PACKAGE_MANAGER__", replacements.packageManager)
     .replaceAll("__BMKL_PROJECT_NAME__", replacements.projectName)
