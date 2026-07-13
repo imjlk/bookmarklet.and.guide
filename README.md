@@ -94,11 +94,12 @@ minutes by default; override that limit with
 `BMKL_TEMPLATE_SMOKE_STEP_TIMEOUT_MS` when diagnosing slower environments.
 
 Templates include `ttsc --noEmit`, an interactive graph viewer, and a separate
-MCP graph-server script. The dedicated `ttsc-shadow` template additionally
-demonstrates lint, strip, and path transforms; ordinary framework templates do
-not install those unused compiler plugins. The Vite integration can opt into
-`@ttsc/unplugin`, while Solid-based templates leave that transform path disabled
-for JSX build compatibility.
+MCP graph-server script. The dedicated `ttsc-shadow` reference stack connects a
+typed DOM adapter, pure report use case, `ttsx` tests, Shadow DOM presentation,
+BMKL runtime lifecycle, and lint, strip, and path transforms. Ordinary framework
+templates do not install those unused compiler plugins. The Vite integration can
+opt into `@ttsc/unplugin`, while Solid-based templates leave that transform path
+disabled for JSX build compatibility.
 `@bmkl/contracts` uses typia as the generated contract layer for external JSON
 payloads, including debug events, remote manifests, action envelopes, and iframe
 bridge messages. `bmkl doctor` runs a contract smoke check so the typia
@@ -108,18 +109,20 @@ transform path fails early when the local compiler setup drifts.
 
 ```text
 lit-shadow           Default TS-first Lit template with Shadow DOM UI
-ttsc-shadow          Compiler-aware TS template using lint, strip, paths, graph
+ttsc-shadow          Reference stack from typed DOM input through tests and graph
 solid-shadow         Compact Solid UI template for fast overlays
 solid-query-shadow   Solid + TanStack Query template for cached async data
 react-shadow         React template for component reuse and familiar workflows
 vanilla-shadow       Minimal TypeScript template with no UI framework
 ```
 
-`ttsc-shadow` is the template for trying the compiler toolchain seriously:
-`@ttsc/lint` runs in the type-check pass, `@ttsc/strip` removes debug-only calls
-from bundled output, `@ttsc/paths` rewrites alias imports for emitted
-declarations. Run `pnpm graph` for the interactive viewer or `pnpm graph:mcp`
-for an MCP-capable coding agent.
+`ttsc-shadow` is the template for trying the complete compiler toolchain
+seriously: `@ttsc/lint` gates types and formatting, `ttsx` executes a focused
+unit test, `@ttsc/strip` removes debug-only calls from bundled output, and
+`@ttsc/paths` rewrites production-reachable aliases and emitted declarations.
+Run `pnpm graph` for the interactive viewer or `pnpm graph:mcp` for an
+MCP-capable coding agent. It is a bookmarklet reference stack, not a bundled
+server or database starter; add remote services only when the product needs them.
 
 TanStack Query stays in its own template so ordinary bookmarklets do not pay for
 async cache tooling unless they need refetched page snapshots, API reads, cache

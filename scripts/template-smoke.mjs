@@ -171,6 +171,10 @@ async function smokeTemplate({
     label: `${templateName} typecheck`,
   });
   if (templateName === "ttsc-shadow") {
+    await runPnpm(["run", "test"], {
+      cwd: projectDir,
+      label: `${templateName} test`,
+    });
     await runPnpm(["run", "emit:types"], {
       cwd: projectDir,
       label: `${templateName} emit types`,

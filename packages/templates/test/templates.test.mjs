@@ -47,13 +47,14 @@ test("getTemplateDir rejects unknown names and traversal", () => {
   assert.throws(() => getTemplateDir("node_modules"), /Unknown template/);
 });
 
-test("ttsc-shadow is presented as the complete compiler-stack template", () => {
+test("ttsc-shadow is presented as the complete reference-stack template", () => {
   const template = getTemplateInfo("ttsc-shadow");
 
-  assert.equal(template?.title, "ttsc Compiler Stack + Shadow DOM");
-  assert.match(template?.description ?? "", /typed paths/);
+  assert.equal(template?.title, "ttsc Reference Stack + Shadow DOM");
+  assert.match(template?.description ?? "", /typed DOM adapter/);
+  assert.match(template?.description ?? "", /ttsx tests/);
   assert.match(template?.description ?? "", /declarations/);
-  assert.match(template?.recommendedFor ?? "", /without a UI framework/);
+  assert.match(template?.recommendedFor ?? "", /without a UI framework or backend/);
 });
 
 test("shared panel conventions stay synchronized across templates", async () => {
@@ -197,6 +198,45 @@ for (const template of TEMPLATE_NAMES) {
         for (const dependency of ["@ttsc/lint", "@ttsc/paths", "@ttsc/strip"]) {
           assert.equal(manifest.devDependencies[dependency], "^0.18.0");
         }
+        assert.equal(
+          manifest.scripts.test,
+          "ttsx --project tsconfig.json test/snapshotReport.test.ts",
+        );
+        assert.match(manifest.scripts.verify, /pnpm test/);
+        assert.match(manifest.scripts.verify, /pnpm doctor$/);
+
+        const lintConfig = await readFile(
+          join(destination, "lint.config.ts"),
+          "utf8",
+        );
+        assert.match(lintConfig, /satisfies ITtscLintConfig/);
+        assert.match(lintConfig, /severity: "error"/);
+        const stripConfig = await readFile(
+          join(destination, "strip.config.js"),
+          "utf8",
+        );
+        assert.match(stripConfig, /@type \{import\("@ttsc\/strip"\)\.ITtscStripConfig\}/);
+        const viteConfig = await readFile(
+          join(destination, "vite.config.ts"),
+          "utf8",
+        );
+        assert.match(viteConfig, /find: \/\^@app\\\/\(\.\+\)\$\//);
+        assert.match(viteConfig, /new URL\("\.\/src\/\$1\.ts"/);
+        const injectSource = await readFile(
+          join(destination, "src", "inject.ts"),
+          "utf8",
+        );
+        assert.match(injectSource, /from "@app\/renderPanel"/);
+        const reportSource = await readFile(
+          join(destination, "src", "snapshotReport.ts"),
+          "utf8",
+        );
+        assert.match(reportSource, /formatSnapshotReport/);
+        const reportTest = await readFile(
+          join(destination, "test", "snapshotReport.test.ts"),
+          "utf8",
+        );
+        assert.match(reportTest, /from "@app\/snapshotReport"/);
       } else {
         for (const dependency of ["@ttsc/lint", "@ttsc/paths", "@ttsc/strip"]) {
           assert.equal(manifest.devDependencies[dependency], undefined);

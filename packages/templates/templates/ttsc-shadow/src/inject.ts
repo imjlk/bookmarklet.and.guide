@@ -4,7 +4,8 @@ import {
   mountBookmarkletApp,
   registerBookmarkletApi,
 } from "@bmkl/runtime";
-import { renderPanel } from "./renderPanel.js";
+
+import { renderPanel } from "@app/renderPanel";
 import styles from "./style.css?inline";
 
 let destroyMountedPanel: (() => void) | undefined;

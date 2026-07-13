@@ -19,7 +19,9 @@
     "graph:mcp": "ttsc-graph",
     "inspect": "bmkl inspect",
     "install-page": "bmkl install-page",
-    "typecheck": "ttsc --noEmit"
+    "test": "ttsx --project tsconfig.json test/snapshotReport.test.ts",
+    "typecheck": "ttsc --noEmit",
+    "verify": "pnpm typecheck && pnpm test && pnpm emit:types && pnpm build && pnpm doctor"
   },
   "dependencies": {
     "@bmkl/runtime": "__BMKL_VERSION__"

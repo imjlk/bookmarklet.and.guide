@@ -136,6 +136,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --dir $project typecheck
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --dir $project test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --dir $project build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --dir $project emit:types

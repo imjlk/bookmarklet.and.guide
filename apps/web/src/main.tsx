@@ -100,10 +100,10 @@ const templates = [
   },
   {
     name: "ttsc-shadow",
-    badge: "Compiler",
-    title: "ttsc Compiler Stack + Shadow DOM",
+    badge: "Reference",
+    title: "ttsc Reference Stack + Shadow DOM",
     command: "pnpm cli -- create my-agent --local --template ttsc-shadow",
-    body: "A practical full-stack compiler example with @ttsc/lint, @ttsc/strip, @ttsc/paths, type emission, graph scripts, and the Vite unplugin path.",
+    body: "An end-to-end bookmarklet reference: typed DOM adapter, pure report use case, ttsx tests, Shadow DOM UI, BMKL lifecycle, compiler transforms, declarations, and dependency graphs.",
   },
   {
     name: "solid-shadow",
@@ -146,7 +146,7 @@ const cliCommands = [
   },
   {
     command: "pnpm cli -- create my-agent --local --template ttsc-shadow",
-    detail: "Use the compiler-aware template for lint diagnostics, strip transforms, path rewrites, and graph output.",
+    detail: "Use the reference stack for typed page input, pure logic, ttsx tests, compiler transforms, declarations, and graph output.",
   },
   {
     command: "pnpm cli -- templates --json",

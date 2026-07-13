@@ -4,6 +4,7 @@
     "useDefineForClassFields": true,
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "allowJs": true,
     "strict": true,
     "skipLibCheck": true,
     "isolatedModules": true,
@@ -14,11 +15,11 @@
     },
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "plugins": [
-      { "transform": "@ttsc/lint", "configFile": "./lint.config.json" },
-      { "transform": "@ttsc/strip", "configFile": "./strip.config.json" },
+      { "transform": "@ttsc/lint", "configFile": "./lint.config.ts" },
+      { "transform": "@ttsc/strip", "configFile": "./strip.config.js" },
       { "transform": "@ttsc/paths" }
     ]
   },
-  "include": ["src", "bookmarklet.config.ts", "vite.config.ts"],
+  "include": ["src", "test", "*.config.ts", "strip.config.js"],
   "exclude": ["src/publicApi.ts"]
 }
