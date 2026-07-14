@@ -94,11 +94,12 @@ minutes by default; override that limit with
 `BMKL_TEMPLATE_SMOKE_STEP_TIMEOUT_MS` when diagnosing slower environments.
 
 Templates include `ttsc --noEmit`, an interactive graph viewer, and a separate
-MCP graph-server script. The dedicated `ttsc-shadow` template additionally
-demonstrates lint, strip, and path transforms; ordinary framework templates do
-not install those unused compiler plugins. The Vite integration can opt into
-`@ttsc/unplugin`, while Solid-based templates leave that transform path disabled
-for JSX build compatibility.
+MCP graph-server script. The dedicated `ttsc-shadow` reference stack connects a
+typed DOM adapter, pure report use case, `ttsx` tests, Shadow DOM presentation,
+BMKL runtime lifecycle, and lint, strip, and path transforms. Ordinary framework
+templates do not install those unused compiler plugins. The Vite integration can
+opt into `@ttsc/unplugin`, while Solid-based templates leave that transform path
+disabled for JSX build compatibility.
 `@bmkl/contracts` uses typia as the generated contract layer for external JSON
 payloads, including debug events, remote manifests, action envelopes, and iframe
 bridge messages. `bmkl doctor` runs a contract smoke check so the typia
@@ -108,18 +109,20 @@ transform path fails early when the local compiler setup drifts.
 
 ```text
 lit-shadow           Default TS-first Lit template with Shadow DOM UI
-ttsc-shadow          Compiler-aware TS template using lint, strip, paths, graph
+ttsc-shadow          Reference stack from typed DOM input through tests and graph
 solid-shadow         Compact Solid UI template for fast overlays
 solid-query-shadow   Solid + TanStack Query template for cached async data
 react-shadow         React template for component reuse and familiar workflows
 vanilla-shadow       Minimal TypeScript template with no UI framework
 ```
 
-`ttsc-shadow` is the template for trying the compiler toolchain seriously:
-`@ttsc/lint` runs in the type-check pass, `@ttsc/strip` removes debug-only calls
-from bundled output, `@ttsc/paths` rewrites alias imports for emitted
-declarations. Run `pnpm graph` for the interactive viewer or `pnpm graph:mcp`
-for an MCP-capable coding agent.
+`ttsc-shadow` is the template for trying the complete compiler toolchain
+seriously: `@ttsc/lint` gates types and formatting, `ttsx` executes a focused
+unit test, `@ttsc/strip` removes debug-only calls from bundled output, and
+`@ttsc/paths` rewrites production-reachable aliases and emitted declarations.
+Run `pnpm graph` for the interactive viewer or `pnpm graph:mcp` for an
+MCP-capable coding agent. It is a bookmarklet reference stack, not a bundled
+server or database starter; add remote services only when the product needs them.
 
 TanStack Query stays in its own template so ordinary bookmarklets do not pay for
 async cache tooling unless they need refetched page snapshots, API reads, cache
@@ -271,6 +274,40 @@ a direct upload cannot accidentally reuse a stale local bundle.
 
 Advanced mode requires `_worker.js` in the Pages output directory. A TypeScript
 worker must be compiled to that filename before deploy.
+
+### Production deployment
+
+`.github/workflows/deploy-web.yml` deploys the site after a web-related change
+lands on `main`. It also supports a manual run from `main`. The workflow
+typechecks and builds the web app, verifies the Pages advanced-mode files, and
+then uploads `apps/web/dist` to the `bmkl` Pages project at
+`https://bmkl.pages.dev`.
+Pull requests use the regular CI build and never receive production credentials.
+
+Complete these one-time setup steps before enabling production deployment:
+
+1. Create the Direct Upload project with `main` as its production branch:
+
+   ```bash
+   pnpm --filter @bmkl/web exec wrangler pages project create bmkl \
+     --production-branch main
+   ```
+
+2. Add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as secrets for the
+   repository or its `production` environment. Limit the token to **Account /
+   Cloudflare Pages / Edit** for the account that owns the project.
+3. In Pages, attach `bookmarklet.and.guide` as a custom domain and finish the
+   requested DNS change. The Actions workflow publishes Pages assets; it does
+   not move the existing domain automatically.
+
+The workflow pins every action to an immutable commit. Keep the version comments
+and SHAs together when updating them. Inspect deploy history before selecting a
+prior deployment for rollback in the Cloudflare dashboard:
+
+```bash
+pnpm --filter @bmkl/web exec wrangler pages deployment list \
+  --project-name bmkl
+```
 
 ## Package release safeguards
 

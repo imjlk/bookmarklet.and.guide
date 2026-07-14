@@ -188,7 +188,7 @@ async function cleanup() {
 
   if (!keepArtifacts) {
     await attempt(() => rm(appDir, { recursive: true, force: true }));
-    await attempt(() => execPnpm(["install"]));
+    await attempt(() => execPnpm(["install", "--no-frozen-lockfile"]));
   }
 
   return errors;
@@ -221,7 +221,7 @@ async function prepareApp() {
 }
 
 async function pnpmInstall() {
-  await execPnpm(["install"]);
+  await execPnpm(["install", "--no-frozen-lockfile"]);
 }
 
 async function startTargetServer() {
@@ -303,6 +303,7 @@ async function startDebugDevServer() {
       join(root, "packages", "cli", "dist", "index.js"),
       "dev",
       "--debug",
+      "--print-bookmarklets",
       "--target",
       `${targetOrigin}/no-csp.html`,
       "--port",
@@ -336,9 +337,7 @@ async function startDebugDevServer() {
 
   await Promise.race([
     waitFor(() => {
-      const match = output.match(
-        /Debug bookmarklet:\s*\n(.*)\n\s*\nTarget-site debug flow:/s,
-      );
+      const match = output.match(/Direct debug:\s*\r?\n(javascript:[^\r\n]+)/);
       if (!match) {
         return false;
       }
@@ -352,7 +351,7 @@ async function startDebugDevServer() {
         debugBookmarkletUrl.startsWith("javascript:") &&
         debugConsoleUrl.startsWith(devOrigin)
       );
-    }, `bmkl dev did not print a debug bookmarklet.\n${output}`),
+    }, () => `bmkl dev did not print a debug bookmarklet.\n${output}`),
     childCompletion(child).then(
       ({ code, signal }) => {
         throw new Error(
@@ -746,7 +745,9 @@ async function waitFor(check, failureMessage, timeout = 15000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(failureMessage);
+  throw new Error(
+    typeof failureMessage === "function" ? failureMessage() : failureMessage,
+  );
 }
 
 function throwIfShuttingDown() {

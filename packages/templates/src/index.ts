@@ -76,13 +76,13 @@ const TEMPLATE_INFOS: TemplateInfo[] = [
   },
   {
     name: "ttsc-shadow",
-    title: "ttsc Compiler Stack + Shadow DOM",
+    title: "ttsc Reference Stack + Shadow DOM",
     framework: "Vanilla + ttsc plugins",
     language: "TypeScript",
     description:
-      "A practical compiler-stack starter with typed paths, lint and format fixes, production stripping, declarations, and dependency graphs.",
+      "A complete reference stack with a typed DOM adapter, pure use case, ttsx tests, lint and format gates, production stripping, path rewriting, declarations, and dependency graphs.",
     recommendedFor:
-      "Teams that want compiler-enforced quality and inspectable architecture without a UI framework.",
+      "Teams that want an end-to-end, compiler-enforced architecture without a UI framework or backend scaffold.",
   },
   {
     name: "solid-shadow",
@@ -523,6 +523,7 @@ function applyReplacements(
   replacements: TemplateReplacements,
 ): string {
   return text
+    .replace(/\r\n?/g, "\n")
     .replaceAll("__BMKL_VERSION__", replacements.bmklVersion)
     .replaceAll("__BMKL_PACKAGE_MANAGER__", replacements.packageManager)
     .replaceAll("__BMKL_PROJECT_NAME__", replacements.projectName)

@@ -15,7 +15,3 @@ export function readPageSnapshot(doc: Document = document): PageSnapshot {
     wordCount: text.trim().split(/\s+/).filter(Boolean).length,
   };
 }
-
-export function summarizeSnapshot(snapshot: PageSnapshot): string {
-  return `${snapshot.wordCount} words on ${snapshot.title || "untitled page"}`;
-}

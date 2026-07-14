@@ -1,15 +1,8 @@
-import { copyText } from "./copyText.js";
-import { devAssert } from "./devAssert.js";
-import {
-  connectPanel,
-  panelConfig,
-  type PanelController,
-} from "./panel.config.js";
-import {
-  readPageSnapshot,
-  summarizeSnapshot,
-  type PageSnapshot,
-} from "./pageSnapshot.js";
+import { copyText } from "@app/copyText";
+import { devAssert } from "@app/devAssert";
+import { readPageSnapshot, type PageSnapshot } from "@app/pageSnapshot";
+import { connectPanel, panelConfig, type PanelController } from "@app/panel.config";
+import { formatSnapshotReport, summarizeSnapshot } from "@app/snapshotReport";
 
 export function renderPanel(
   root: HTMLElement,
@@ -41,15 +34,7 @@ export function renderPanel(
 }
 
 async function copySnapshot(root: HTMLElement, snapshot: PageSnapshot): Promise<void> {
-  const text = [
-    snapshot.title || "Untitled page",
-    snapshot.href,
-    `${snapshot.wordCount} words`,
-    snapshot.selectedText ? `Selection: ${snapshot.selectedText}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
-  const message = await copyText(text, "page snapshot");
+  const message = await copyText(formatSnapshotReport(snapshot), "page snapshot");
   const status = root.querySelector<HTMLElement>("[data-status]");
   if (status) {
     status.textContent = message;
@@ -107,7 +92,7 @@ function escapeHtml(value: string): string {
         return "&lt;";
       case ">":
         return "&gt;";
-      case "\"":
+      case '"':
         return "&quot;";
       default:
         return "&#039;";
