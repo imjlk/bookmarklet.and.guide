@@ -2,7 +2,7 @@
   "name": "@bmkl/web",
   "version": "0.1.0",
   "description": "BMKL product guide and Cloudflare Pages site.",
-  "homepage": "https://bookmarklet.and.guide",
+  "homepage": "https://bmkl.pages.dev",
   "private": true,
   "type": "module",
   "engines": {
