@@ -280,7 +280,8 @@ worker must be compiled to that filename before deploy.
 `.github/workflows/deploy-web.yml` deploys the site after a web-related change
 lands on `main`. It also supports a manual run from `main`. The workflow
 typechecks and builds the web app, verifies the Pages advanced-mode files, and
-then uploads `apps/web/dist` to the `bookmarklet-and-guide` Pages project.
+then uploads `apps/web/dist` to the `bmkl` Pages project at
+`https://bmkl.pages.dev`.
 Pull requests use the regular CI build and never receive production credentials.
 
 Complete these one-time setup steps before enabling production deployment:
@@ -288,7 +289,7 @@ Complete these one-time setup steps before enabling production deployment:
 1. Create the Direct Upload project with `main` as its production branch:
 
    ```bash
-   pnpm --filter @bmkl/web exec wrangler pages project create bookmarklet-and-guide \
+   pnpm --filter @bmkl/web exec wrangler pages project create bmkl \
      --production-branch main
    ```
 
@@ -305,7 +306,7 @@ prior deployment for rollback in the Cloudflare dashboard:
 
 ```bash
 pnpm --filter @bmkl/web exec wrangler pages deployment list \
-  --project-name bookmarklet-and-guide
+  --project-name bmkl
 ```
 
 ## Package release safeguards

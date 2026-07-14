@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 15
     environment:
       name: production
-      url: https://bookmarklet.and.guide
+      url: https://bmkl.pages.dev
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
@@ -62,4 +62,4 @@ jobs:
           packageManager: pnpm
           workingDirectory: apps/web
           wranglerVersion: "4.107.1"
-          command: pages deploy dist --project-name=bookmarklet-and-guide --branch=main
+          command: pages deploy dist --project-name=bmkl --branch=main

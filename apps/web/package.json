@@ -11,7 +11,7 @@
   "scripts": {
     "build": "vite build",
     "clean": "node ../../scripts/clean-package.mjs",
-    "deploy": "pnpm run build && wrangler pages deploy dist --project-name bookmarklet-and-guide",
+    "deploy": "pnpm run build && wrangler pages deploy dist --project-name bmkl",
     "dev": "vite",
     "pages:dev": "pnpm build && wrangler pages dev dist",
     "preview": "vite preview",

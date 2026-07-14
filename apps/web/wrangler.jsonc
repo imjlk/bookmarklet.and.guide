@@ -1,6 +1,6 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
-  "name": "bookmarklet-and-guide",
+  "name": "bmkl",
   "pages_build_output_dir": "./dist",
   "compatibility_date": "2026-07-04",
   "compatibility_flags": ["nodejs_compat"],
