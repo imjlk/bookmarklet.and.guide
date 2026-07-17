@@ -29,15 +29,15 @@
     "typecheck": "ttsc --noEmit"
   },
   "dependencies": {
-    "@ttsc/unplugin": "^0.18.0"
+    "@ttsc/unplugin": "0.19.3"
   },
   "devDependencies": {
-    "ttsc": "^0.18.0",
+    "ttsc": "0.19.3",
     "typescript": "^7.0.2",
     "vite": "^8.1.4"
   },
   "peerDependencies": {
-    "ttsc": "^0.18.0",
+    "ttsc": "0.19.3",
     "vite": "^8.1.4"
   }
 }

@@ -195,6 +195,10 @@ async function smokeTemplate({
   );
   if (templateName === "ttsc-shadow") {
     await assertTtscCompilerOutput(projectDir, templateName);
+    await runPnpm(["run", "doctor"], {
+      cwd: projectDir,
+      label: `${templateName} doctor`,
+    });
   }
   console.log(`\u2713 ${templateName}`);
 }

@@ -36,10 +36,12 @@
   "dependencies": {
     "@bmkl/contracts": "workspace:*",
     "@bmkl/core": "workspace:*",
-    "@bmkl/templates": "workspace:*"
+    "@bmkl/templates": "workspace:*",
+    "semver": "^7.8.5"
   },
   "devDependencies": {
-    "ttsc": "^0.18.0",
+    "@types/semver": "^7.7.1",
+    "ttsc": "0.19.3",
     "tsx": "^4.23.0",
     "typescript": "^7.0.2"
   }

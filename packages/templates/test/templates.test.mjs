@@ -111,7 +111,8 @@ for (const template of TEMPLATE_NAMES) {
       assert.equal(manifest.scripts.preview, "vite");
       assert.equal(manifest.scripts.graph, "ttsc-graph view");
       assert.equal(manifest.scripts["graph:mcp"], "ttsc-graph");
-      assert.equal(manifest.devDependencies["@ttsc/graph"], "^0.18.0");
+      assert.equal(manifest.devDependencies["@ttsc/graph"], "0.19.3");
+      assert.equal(manifest.devDependencies.ttsc, "0.19.3");
       assert.doesNotMatch(JSON.stringify(manifest), /workspace:/);
 
       const previewHtml = await readFile(join(destination, "index.html"), "utf8");
@@ -211,7 +212,7 @@ for (const template of TEMPLATE_NAMES) {
 
       if (template === "ttsc-shadow") {
         for (const dependency of ["@ttsc/lint", "@ttsc/paths", "@ttsc/strip"]) {
-          assert.equal(manifest.devDependencies[dependency], "^0.18.0");
+          assert.equal(manifest.devDependencies[dependency], "0.19.3");
         }
         assert.equal(
           manifest.scripts.test,
@@ -252,10 +253,21 @@ for (const template of TEMPLATE_NAMES) {
           "utf8",
         );
         assert.match(reportTest, /from "@app\/snapshotReport"/);
+        const mcpConfig = JSON.parse(
+          await readFile(join(destination, ".mcp.json"), "utf8"),
+        );
+        assert.deepEqual(mcpConfig.mcpServers["ttsc-graph"], {
+          command: "npx",
+          args: ["-y", "@ttsc/graph"],
+        });
       } else {
         for (const dependency of ["@ttsc/lint", "@ttsc/paths", "@ttsc/strip"]) {
           assert.equal(manifest.devDependencies[dependency], undefined);
         }
+        await assert.rejects(
+          readFile(join(destination, ".mcp.json"), "utf8"),
+          { code: "ENOENT" },
+        );
         const tsconfig = JSON.parse(
           await readFile(join(destination, "tsconfig.json"), "utf8"),
         );

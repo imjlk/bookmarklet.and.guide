@@ -26,9 +26,9 @@
     "@bmkl/cli": "__BMKL_VERSION__",
     "@bmkl/core": "__BMKL_VERSION__",
     "@bmkl/vite": "__BMKL_VERSION__",
-    "@ttsc/graph": "^0.18.0",
+    "@ttsc/graph": "0.19.3",
     "esbuild": "^0.28.1",
-    "ttsc": "^0.18.0",
+    "ttsc": "0.19.3",
     "typescript": "^7.0.2",
     "vite": "^8.1.4"
   }

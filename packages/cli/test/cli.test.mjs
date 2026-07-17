@@ -352,6 +352,94 @@ test("doctor executes the project-local ttsc launcher", async () => {
   });
 });
 
+test("doctor treats an absent ttsc graph package as optional", async () => {
+  await withBuildProject(async ({ root }) => {
+    await writeFile(join(root, "tsconfig.json"), "{}\n");
+
+    const result = runCli(["doctor", "--json"], { cwd: root });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(findCheck(JSON.parse(result.stdout), "ttsc-graph"), {
+      name: "ttsc-graph",
+      status: "warn",
+      message: "@ttsc/graph is not installed; code graph support is optional.",
+    });
+  });
+});
+
+test("doctor reports whether ttsc graph uses a compatible protocol version", async () => {
+  await withBuildProject(async ({ root }) => {
+    const ttscManifestPath = join(root, "node_modules", "ttsc", "package.json");
+    const graphPackageRoot = join(root, "node_modules", "@ttsc", "graph");
+    await mkdir(graphPackageRoot, { recursive: true });
+    await writeFile(join(root, "tsconfig.json"), "{}\n");
+    await writeFile(
+      ttscManifestPath,
+      `${JSON.stringify(
+        {
+          name: "ttsc",
+          version: "0.19.3",
+          type: "module",
+          bin: { ttsc: "fixture.mjs" },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    await writeFile(
+      join(graphPackageRoot, "package.json"),
+      `${JSON.stringify(
+        {
+          name: "@ttsc/graph",
+          version: "0.19.3",
+          peerDependencies: { ttsc: "^0.19.0" },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const compatible = runCli(["doctor", "--json"], { cwd: root });
+    assert.equal(compatible.status, 0, compatible.stderr);
+    assert.deepEqual(findCheck(JSON.parse(compatible.stdout), "ttsc-graph"), {
+      name: "ttsc-graph",
+      status: "pass",
+      message: "ttsc 0.19.3 and @ttsc/graph 0.19.3 are protocol-compatible.",
+    });
+
+    await writeFile(
+      join(graphPackageRoot, "package.json"),
+      `${JSON.stringify(
+        {
+          name: "@ttsc/graph",
+          version: "0.20.0",
+          peerDependencies: { ttsc: "^0.20.0" },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const mismatched = runCli(["doctor", "--json"], { cwd: root });
+    assert.equal(mismatched.status, 1);
+    assert.deepEqual(findCheck(JSON.parse(mismatched.stdout), "ttsc-graph"), {
+      name: "ttsc-graph",
+      status: "fail",
+      message:
+        "@ttsc/graph 0.20.0 expects ttsc ^0.20.0, found 0.19.3. Upgrade both together.",
+    });
+
+    await writeFile(join(graphPackageRoot, "package.json"), "{invalid json\n");
+    const unreadable = runCli(["doctor", "--json"], { cwd: root });
+    assert.equal(unreadable.status, 1);
+    const unreadableCheck = findCheck(JSON.parse(unreadable.stdout), "ttsc-graph");
+    assert.equal(unreadableCheck.status, "fail");
+    assert.match(
+      unreadableCheck.message,
+      /^Could not read @ttsc\/graph package metadata:/,
+    );
+  });
+});
+
 test("doctor validates URL hosts and requires regular config files", async () => {
   await withBuildProject(async ({ binDir, root }) => {
     const validConfig = join(root, "doctor-remote.config.mjs");
