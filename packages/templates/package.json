@@ -34,7 +34,7 @@
     "typecheck": "ttsc --noEmit"
   },
   "devDependencies": {
-    "ttsc": "^0.18.0",
+    "ttsc": "0.19.3",
     "typescript": "^7.0.2"
   }
 }

@@ -29,14 +29,14 @@
     "web:preview": "pnpm --filter @bmkl/web preview"
   },
   "devDependencies": {
-    "@ttsc/graph": "^0.18.0",
-    "@ttsc/lint": "^0.18.0",
-    "@ttsc/paths": "^0.18.0",
-    "@ttsc/strip": "^0.18.0",
+    "@ttsc/graph": "0.19.3",
+    "@ttsc/lint": "0.19.3",
+    "@ttsc/paths": "0.19.3",
+    "@ttsc/strip": "0.19.3",
     "@types/node": "^26.1.1",
     "esbuild": "^0.28.1",
     "playwright": "^1.61.1",
-    "ttsc": "^0.18.0",
+    "ttsc": "0.19.3",
     "typescript": "^7.0.2"
   }
 }

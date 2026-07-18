@@ -45,7 +45,9 @@ pnpm graph
 fixes, `format` rewrites the project, `test` executes TypeScript through `ttsx`,
 `emit:types` verifies declaration output and path rewriting, and `graph` opens
 the dependency graph. Use `pnpm graph:mcp` as the server command for an
-MCP-capable coding agent.
+MCP-capable coding agent. The included `.mcp.json` exposes that server to clients
+that support project-local MCP configuration; keep `ttsc` and `@ttsc/graph` on
+the same version because they communicate over a versioned protocol.
 
 The production-reachable modules use `@app/*` imports, so path rewriting is part
 of the real build instead of an isolated configuration example. Lint and strip

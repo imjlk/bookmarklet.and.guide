@@ -36,7 +36,7 @@
     "@bmkl/templates": "workspace:*"
   },
   "devDependencies": {
-    "ttsc": "^0.18.0",
+    "ttsc": "0.19.3",
     "tsx": "^4.23.0",
     "typescript": "^7.0.2"
   }

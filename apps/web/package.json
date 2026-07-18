@@ -22,7 +22,7 @@
     "solid-js": "^1.9.14"
   },
   "devDependencies": {
-    "ttsc": "^0.18.0",
+    "ttsc": "0.19.3",
     "typescript": "^7.0.2",
     "vite": "^8.1.4",
     "vite-plugin-solid": "^2.11.12",

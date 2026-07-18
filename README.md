@@ -104,6 +104,10 @@ disabled for JSX build compatibility.
 payloads, including debug events, remote manifests, action envelopes, and iframe
 bridge messages. `bmkl doctor` runs a contract smoke check so the typia
 transform path fails early when the local compiler setup drifts.
+The `ttsc` packages are pinned together because `@ttsc/graph` communicates with
+the project-local compiler over a versioned protocol. `bmkl doctor` reports a
+version mismatch before an agent starts the graph server, and `ttsc-shadow`
+includes a project-local `.mcp.json` for MCP clients that support it.
 
 ## Templates
 
@@ -121,8 +125,10 @@ seriously: `@ttsc/lint` gates types and formatting, `ttsx` executes a focused
 unit test, `@ttsc/strip` removes debug-only calls from bundled output, and
 `@ttsc/paths` rewrites production-reachable aliases and emitted declarations.
 Run `pnpm graph` for the interactive viewer or `pnpm graph:mcp` for an
-MCP-capable coding agent. It is a bookmarklet reference stack, not a bundled
-server or database starter; add remote services only when the product needs them.
+MCP-capable coding agent; the included `.mcp.json` makes the latter discoverable
+without copying server configuration by hand. It is a bookmarklet reference
+stack, not a bundled server or database starter; add remote services only when
+the product needs them.
 
 TanStack Query stays in its own template so ordinary bookmarklets do not pay for
 async cache tooling unless they need refetched page snapshots, API reads, cache

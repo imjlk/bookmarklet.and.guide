@@ -18,6 +18,7 @@ import {
   type CreateProjectResult,
   type TemplateInfo,
 } from "@bmkl/templates";
+import { satisfies } from "semver";
 
 const VERSION = readOwnPackageVersion();
 interface ParsedArgs {
@@ -36,6 +37,16 @@ interface DoctorCheck {
   status: "pass" | "warn" | "fail";
   message: string;
 }
+
+interface InstalledPackageManifest {
+  peerDependencies?: Record<string, unknown>;
+  version?: unknown;
+}
+
+type InstalledPackageManifestResult =
+  | { status: "found"; manifest: InstalledPackageManifest }
+  | { status: "missing" }
+  | { status: "unreadable"; message: string };
 
 interface ContractSmokeResult {
   ok: true;
@@ -503,9 +514,15 @@ async function runDoctor(argv: string[]): Promise<void> {
             message: "Could not run the project-local ttsc --version",
           },
     );
+    checks.push(createTtscGraphCompatibilityCheck(config.root));
   } else {
     checks.push({
       name: "ttsc-binary",
+      status: "pass",
+      message: "ttsc checks are disabled",
+    });
+    checks.push({
+      name: "ttsc-graph",
       status: "pass",
       message: "ttsc checks are disabled",
     });
@@ -968,9 +985,7 @@ function printPnpmPrerequisite(packageManager: string): void {
 function printChangeDirectory(value: string): void {
   if (process.platform === "win32") {
     console.log("  # Windows PowerShell");
-    console.log(
-      `  Set-Location -LiteralPath '${value.replaceAll("'", "''")}'`,
-    );
+    console.log(`  Set-Location -LiteralPath '${value.replaceAll("'", "''")}'`);
     return;
   }
 
@@ -1253,6 +1268,61 @@ function createRemoteBaseUrlCheck(
   };
 }
 
+function createTtscGraphCompatibilityCheck(root: string): DoctorCheck {
+  const graphResult = readInstalledPackageManifest(root, "@ttsc/graph");
+  if (graphResult.status === "missing") {
+    return {
+      name: "ttsc-graph",
+      status: "warn",
+      message: "@ttsc/graph is not installed; code graph support is optional.",
+    };
+  }
+  if (graphResult.status === "unreadable") {
+    return {
+      name: "ttsc-graph",
+      status: "fail",
+      message: `Could not read @ttsc/graph package metadata: ${graphResult.message}`,
+    };
+  }
+
+  const ttscResult = readInstalledPackageManifest(root, "ttsc");
+  if (ttscResult.status !== "found") {
+    return {
+      name: "ttsc-graph",
+      status: "fail",
+      message:
+        ttscResult.status === "missing"
+          ? "@ttsc/graph is installed but ttsc package metadata is missing."
+          : `Could not read ttsc package metadata: ${ttscResult.message}`,
+    };
+  }
+
+  const graph = graphResult.manifest;
+  const ttsc = ttscResult.manifest;
+  const graphVersion = readManifestVersion(graph);
+  const ttscVersion = readManifestVersion(ttsc);
+  const expectedTtscRange = graph.peerDependencies?.ttsc;
+  if (!graphVersion || !ttscVersion || typeof expectedTtscRange !== "string") {
+    return {
+      name: "ttsc-graph",
+      status: "fail",
+      message: "Could not verify the installed ttsc and @ttsc/graph versions.",
+    };
+  }
+  if (!satisfies(ttscVersion, expectedTtscRange)) {
+    return {
+      name: "ttsc-graph",
+      status: "fail",
+      message: `@ttsc/graph ${graphVersion} expects ttsc ${expectedTtscRange}, found ${ttscVersion}. Upgrade both together.`,
+    };
+  }
+  return {
+    name: "ttsc-graph",
+    status: "pass",
+    message: `ttsc ${ttscVersion} and @ttsc/graph ${graphVersion} are protocol-compatible.`,
+  };
+}
+
 function isRegularFile(path: string): boolean {
   try {
     return statSync(path).isFile();
@@ -1270,6 +1340,47 @@ function readOwnPackageVersion(): string {
     throw new Error(`Invalid @bmkl/cli version in ${packageJsonUrl.pathname}`);
   }
   return metadata.version;
+}
+
+function readInstalledPackageManifest(
+  root: string,
+  packageName: string,
+): InstalledPackageManifestResult {
+  try {
+    const requireFromProject = createRequire(resolve(root, "package.json"));
+    const packageJsonPath = requireFromProject.resolve(`${packageName}/package.json`);
+    return {
+      status: "found",
+      manifest: JSON.parse(
+        readFileSync(packageJsonPath, "utf8"),
+      ) as InstalledPackageManifest,
+    };
+  } catch (error) {
+    if (isModuleNotFoundError(error)) {
+      return { status: "missing" };
+    }
+    return {
+      status: "unreadable",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function isModuleNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "MODULE_NOT_FOUND"
+  );
+}
+
+function readManifestVersion(
+  manifest: InstalledPackageManifest,
+): string | undefined {
+  return typeof manifest.version === "string" && manifest.version.length > 0
+    ? manifest.version
+    : undefined;
 }
 
 function formatBytes(size: number): string {
