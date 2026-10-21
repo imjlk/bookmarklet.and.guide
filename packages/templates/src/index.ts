@@ -610,5 +610,9 @@ function toGlobalName(input: string): string {
     .filter(Boolean)
     .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
     .join("");
-  return normalized || "BookmarkletApp";
+  if (!normalized) {
+    return "BookmarkletApp";
+  }
+  // IIFE global names must be JS identifiers; npm names may start with a digit.
+  return /^[0-9]/.test(normalized) ? `Bmkl${normalized}` : normalized;
 }

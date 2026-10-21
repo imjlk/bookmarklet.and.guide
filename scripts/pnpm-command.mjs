@@ -6,10 +6,11 @@ export function getPnpmCommand(args, options = {}) {
   const pnpmExecPath = env.npm_execpath;
 
   if (userAgent.startsWith("pnpm/") && pnpmExecPath) {
-    return {
-      args: [pnpmExecPath, ...args],
-      command: execPath,
-    };
+    // Standalone pnpm (@pnpm/exe, the official install script) sets
+    // npm_execpath to a native binary; only JavaScript entrypoints go through node.
+    return /\.[cm]?js$/i.test(pnpmExecPath)
+      ? { args: [pnpmExecPath, ...args], command: execPath }
+      : { args, command: pnpmExecPath };
   }
 
   if (platform === "win32") {

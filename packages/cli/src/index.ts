@@ -569,9 +569,20 @@ async function runDoctor(argv: string[]): Promise<void> {
           },
   );
 
+  const failedChecks = checks.filter((check) => check.status === "fail");
   const report = {
     checks,
-    ok: checks.every((check) => check.status !== "fail"),
+    ok: failedChecks.length === 0,
+    // Match the `{ ok: false, error: { message } }` envelope used by other --json failures.
+    ...(failedChecks.length > 0
+      ? {
+          error: {
+            message: `Doctor found ${failedChecks.length} failing check(s): ${failedChecks
+              .map((check) => check.name)
+              .join(", ")}.`,
+          },
+        }
+      : {}),
   };
 
   if (flagBoolean(args, "json")) {
@@ -688,7 +699,8 @@ function parseArgs(
 
     if (arg.startsWith("-") && arg.length > 1) {
       const [shortName, inlineValue] = splitOptionArgument(arg, 1);
-      const name = aliases[shortName] ?? shortName;
+      // Single-dash options are one-letter aliases only; `-json` is not `--json`.
+      const name = shortName.length === 1 ? aliases[shortName] ?? shortName : "";
       assertKnownOption(arg, name, known);
       assertOptionNotRepeated(flags, name);
       if (booleans.has(name)) {
@@ -906,7 +918,7 @@ function printCompanionHelp(): void {
   console.log("Options:");
   console.log("  -c, --config <file>          Path to bookmarklet config file");
   console.log(
-    "  --target <url-or-pattern>    Target URL or Chrome match pattern (default: <all_urls>)",
+    "  --target <url>               Target page HTTP(S) URL (required; wildcards and <all_urls> are rejected)",
   );
   console.log(
     "  --debug-console-url <url>    Debug console URL (default: http://127.0.0.1:5173/__bmkl/debug)",
@@ -1437,7 +1449,13 @@ function getInvocationCwd(): string {
 
 function formatDisplayPath(path: string): string {
   const cwd = getInvocationCwd();
-  return path.startsWith(`${cwd}/`) ? relative(cwd, path) : path;
+  const relativePath = relative(cwd, path);
+  return relativePath &&
+    relativePath !== ".." &&
+    !relativePath.startsWith(`..${sep}`) &&
+    !isAbsolute(relativePath)
+    ? relativePath
+    : path;
 }
 
 async function runContractSmoke(): Promise<ContractSmokeResult> {
