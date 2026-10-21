@@ -19,6 +19,25 @@ test("getPnpmCommand uses the active pnpm JavaScript entrypoint", () => {
   );
 });
 
+test("getPnpmCommand runs a standalone native pnpm binary directly", () => {
+  for (const [platform, pnpmExecPath] of [
+    ["linux", "/home/me/.local/share/pnpm/node_modules/@pnpm/exe/pnpm"],
+    ["win32", "C:\\Users\\me\\AppData\\Local\\pnpm\\pnpm.exe"],
+  ]) {
+    assert.deepEqual(
+      getPnpmCommand(["install"], {
+        env: {
+          npm_config_user_agent: "pnpm/11.7.0 npm/? node/v24.22.0",
+          npm_execpath: pnpmExecPath,
+        },
+        execPath: "/tools/node",
+        platform,
+      }),
+      { args: ["install"], command: pnpmExecPath },
+    );
+  }
+});
+
 test("getPnpmCommand falls back to PATH on non-Windows platforms", () => {
   assert.deepEqual(
     getPnpmCommand(["run", "build"], {
