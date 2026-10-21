@@ -703,7 +703,7 @@ function App() {
               <div class="debug-terminal" aria-label="Debug command">
                 <code>pnpm exec bmkl dev --debug --target https://example.com</code>
                 <code>pnpm exec bmkl companion --target https://example.com --port 5173</code>
-                <code>Debug console: http://127.0.0.1:5173/__bmkl/debug</code>
+                <code>Debug console: http://127.0.0.1:5173/__bmkl/debug?token=…</code>
                 <code>Debug bookmarklet: javascript:(...)</code>
               </div>
             </div>

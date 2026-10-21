@@ -344,12 +344,31 @@ test("doctor executes the project-local ttsc launcher", async () => {
     const result = runCli(["doctor", "--json"], { cwd: root });
 
     assert.equal(result.status, 1);
-    assert.deepEqual(findCheck(JSON.parse(result.stdout), "ttsc-binary"), {
+    const report = JSON.parse(result.stdout);
+    assert.deepEqual(findCheck(report, "ttsc-binary"), {
       name: "ttsc-binary",
       status: "fail",
       message: "Could not run the project-local ttsc --version",
     });
+    assert.equal(report.ok, false);
+    assert.match(report.error.message, /failing check\(s\): .*ttsc-binary/);
   });
+});
+
+test("single-dash long options are rejected instead of aliasing --json", () => {
+  const result = runCli(["build", "-json"]);
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /Unknown option: -json/);
+});
+
+test("companion help documents the required concrete target URL", () => {
+  const result = runCli(["companion", "--help"]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /--target <url>/);
+  assert.doesNotMatch(result.stdout, /default: <all_urls>/);
 });
 
 test("doctor treats an absent ttsc graph package as optional", async () => {

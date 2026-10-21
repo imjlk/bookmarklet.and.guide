@@ -258,7 +258,7 @@ for (const template of TEMPLATE_NAMES) {
         );
         assert.deepEqual(mcpConfig.mcpServers["ttsc-graph"], {
           command: "npx",
-          args: ["-y", "@ttsc/graph"],
+          args: ["--no", "ttsc-graph"],
         });
       } else {
         for (const dependency of ["@ttsc/lint", "@ttsc/paths", "@ttsc/strip"]) {
@@ -327,6 +327,29 @@ test("createProject derives a display title without changing code identifiers", 
     assert.doesNotMatch(readme, /__BMKL_/);
     assert.doesNotMatch(previewHtml, /__BMKL_/);
     assert.doesNotMatch(panelConfig, /__BMKL_/);
+  } finally {
+    await rm(tempRoot, { force: true, recursive: true });
+  }
+});
+
+test("createProject prefixes digit-leading names into a legal IIFE global", async () => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "bmkl-templates-global-test-"));
+  const destination = join(tempRoot, "123-app");
+
+  try {
+    const result = await createProject({
+      destination,
+      template: "vanilla-shadow",
+    });
+    const bookmarkletConfig = await readFile(
+      join(destination, "bookmarklet.config.ts"),
+      "utf8",
+    );
+
+    assert.equal(result.projectName, "123-app");
+    assert.equal(result.globalName, "Bmkl123App");
+    assert.match(result.globalName, /^[A-Za-z_$][A-Za-z0-9_$]*$/);
+    assert.match(bookmarkletConfig, /globalName: "Bmkl123App"/);
   } finally {
     await rm(tempRoot, { force: true, recursive: true });
   }
