@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createServer } from "vite";
+import { build, createServer } from "vite";
 import { bmkl } from "../dist/index.js";
 
 test("explicit development origins must be absolute HTTP(S) URLs", () => {
@@ -139,6 +139,50 @@ test("dev server returns CORS headers for the configured target origin", async (
   } finally {
     await server.close();
     await rm(root, { force: true, recursive: true });
+  }
+});
+
+async function buildCssFixture(source) {
+  const root = await mkdtemp(join(tmpdir(), "bmkl-vite-css-"));
+  await mkdir(join(root, "src"), { recursive: true });
+  // Deliberately no package.json: lib mode must not require a package name.
+  await writeFile(join(root, "src", "style.css"), ".panel{color:#ffefd5}\n");
+  await writeFile(
+    join(root, "src", "inject.ts"),
+    source,
+  );
+  const outDir = join(root, "dist");
+  const run = () =>
+    build({
+      configFile: false,
+      logLevel: "silent",
+      plugins: bmkl({ entry: "src/inject.ts", name: "CssFixture", outDir }),
+      root,
+    });
+  return { outDir, root, run };
+}
+
+test("IIFE build rejects extracted CSS with an actionable ?inline error", async () => {
+  const fixture = await buildCssFixture(
+    'import "./style.css";\nexport function run() { return "panel"; }\n',
+  );
+  try {
+    await assert.rejects(fixture.run(), /extracted stylesheets \(bmkl-extracted\.css\).*\?inline/s);
+  } finally {
+    await rm(fixture.root, { force: true, recursive: true });
+  }
+});
+
+test("IIFE build embeds ?inline CSS in the single app bundle", async () => {
+  const fixture = await buildCssFixture(
+    'import styles from "./style.css?inline";\nexport function run() { return styles; }\n',
+  );
+  try {
+    await fixture.run();
+    assert.deepEqual(await readdir(fixture.outDir), ["app.iife.js"]);
+    assert.match(await readFile(join(fixture.outDir, "app.iife.js"), "utf8"), /#ffefd5/);
+  } finally {
+    await rm(fixture.root, { force: true, recursive: true });
   }
 });
 
