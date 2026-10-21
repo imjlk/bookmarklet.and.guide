@@ -2,6 +2,11 @@ import type { TtscUnpluginOptions } from "@ttsc/unplugin";
 import * as ttscModule from "@ttsc/unplugin/vite";
 import type { Plugin, UserConfig, ViteDevServer } from "vite";
 
+// Vite lib mode needs a CSS file name (or package.json "name") whenever CSS is
+// extracted. Naming it keeps the build alive long enough to report the
+// actionable "?inline" error from generateBundle below.
+const EXTRACTED_CSS_FILE_NAME = "bmkl-extracted";
+
 const ttsc = (ttscModule as unknown as {
   default: (options?: TtscUnpluginOptions) => Plugin;
 }).default;
@@ -48,6 +53,7 @@ export function bmkl(options: BmklVitePluginOptions = {}): Plugin[] {
             name,
             formats: ["iife"],
             fileName: () => appFileName,
+            cssFileName: EXTRACTED_CSS_FILE_NAME,
           },
           outDir,
         },
@@ -55,6 +61,24 @@ export function bmkl(options: BmklVitePluginOptions = {}): Plugin[] {
           cors: devOrigin ? { origin: devOrigin } : true,
         },
       };
+    },
+    generateBundle: {
+      // Vite emits extracted CSS assets in its own generateBundle step; run after it.
+      order: "post",
+      handler(outputOptions, bundle) {
+        if (outputOptions.format !== "iife") {
+          return;
+        }
+        const extracted = Object.keys(bundle).filter((fileName) =>
+          fileName.endsWith(".css"),
+        );
+        if (extracted.length > 0) {
+          this.error(
+            `BMKL bookmarklets load a single IIFE, so extracted stylesheets (${extracted.join(", ")}) would never reach the page. ` +
+              `Import CSS with "?inline" (for example \`import styles from "./style.css?inline"\`) and inject it into the Shadow DOM.`,
+          );
+        }
+      },
     },
     configureServer(server) {
       server.middlewares.use("/__bmkl/dev-bookmarklet", (req, res, next) => {

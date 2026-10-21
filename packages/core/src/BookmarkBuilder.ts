@@ -529,6 +529,7 @@ export class BookmarkBuilder {
                 name: this.config.globalName,
                 formats: ["iife"],
                 fileName: () => outputFileName,
+                cssFileName: "bmkl-extracted",
               },
               minify: this.config.vite?.minify ?? "esbuild",
               outDir: paths.remoteDir,
